@@ -1,36 +1,17 @@
 /*
-    Example code compatible with the Lambda Shield for Arduino.
+    Bosch CJ125 based wideband oxygen sensor controller.
 
-    Copyright (C) 2017 - 2020 Bylund Automotive AB.
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-    Contact information of author:
-    http://www.bylund-automotive.com/
-
-    info@bylund-automotive.com
+    Originally forked from https://github.com/Bylund/Lambda-Shield-2-Example
 
     Version history:
-    2020-03-29        v1.0.0        First release to GitHub.
-    2020-06-18        v1.1.0        Implemented support for data logging.
+    2020-08-14        v1.0.0        Changed pinout to suit ATTin1614. Removed serial output debugging & changed analog output signal to suit Speeduino. Removed power loss reset due to single supply.
 
 */
 
-//Define included headers.
+// Define included headers.
 #include <SPI.h>
 
-//Define CJ125 registers used.
+// Define CJ125 registers used.
 #define           CJ125_IDENT_REG_REQUEST             0x4800        /* Identify request, gives revision of the chip. */
 #define           CJ125_DIAG_REG_REQUEST              0x7800        /* Dignostic request, gives the current status. */
 #define           CJ125_INIT_REG1_REQUEST             0x6C00        /* Requests the first init register. */
@@ -44,8 +25,8 @@
 #define           CJ125_INIT_REG1_STATUS_0            0x2888        /* The response of the init register when V=8 amplification is in use. */
 #define           CJ125_INIT_REG1_STATUS_1            0x2889        /* The response of the init register when V=17 amplification is in use. */
 
-//Define pin assignments.
-#define           CJ125_NSS_PIN                       0            /* Pin used for chip select in SPI communication. */
+// Define pin assignments(ATTiny1614)
+#define           CJ125_NSS_PIN                       0             /* Pin used for chip select in SPI communication. */
 #define           LED_STATUS_POWER                    4             /* Pin used for power the status LED, indicating we have power. */
 #define           LED_STATUS_HEATER                   5             /* Pin used for the heater status LED, indicating heater activity. */
 #define           HEATER_OUTPUT_PIN                   3             /* Pin used for the PWM output to the heater circuit. */
@@ -54,11 +35,11 @@
 #define           UR_ANALOG_INPUT_PIN                 7             /* Analog input for temperature.*/
 #define           UA_ANALOG_INPUT_PIN                 6             /* Analog input for lambda.*/
 
-//Define adjustable parameters.
+// Define adjustable parameters.
 #define           SERIAL_RATE                         1             /* Serial refresh rate in HZ (1-100)*/
 #define           UBAT_MIN                            150           /* Minimum voltage (ADC value) on Ubat to operate */
 
-//Global variables.
+// Global variables.
 int adcValue_UA = 0;                                                /* ADC value read from the CJ125 UA output pin */
 int adcValue_UR = 0;                                                /* ADC value read from the CJ125 UR output pin */
 int adcValue_UB = 0;                                                /* ADC value read from the voltage divider caluclating Ubat */
@@ -71,7 +52,7 @@ bool logEnabled = false;                                            /* Variable 
 int brightness = 0;                                                 /* Heater/status LED brighteness */
 int fadeAmount = 5;                                                 /* Heater/status LED fade ammount */
 
-//PID regulation variables.
+// PID regulation variables.
 int dState;                                                         /* Last position input. */
 int iState;                                                         /* Integrator state. */
 const int iMax = 250;                                               /* Maximum allowable integrator state. */
@@ -80,7 +61,7 @@ const float pGain = 120;                                            /* Proportio
 const float iGain = 0.8;                                            /* Integral gain. Default = 0.8*/
 const float dGain = 10;                                             /* Derivative gain. Default = 10*/
 
-//Lambda Conversion Lookup Table. (ADC 39-791).
+// Lambda Conversion Lookup Table. (ADC 39-791).
 const PROGMEM float Lambda_Conversion[753] {
   0.750, 0.751, 0.752, 0.752, 0.753, 0.754, 0.755, 0.755, 0.756, 0.757, 0.758, 0.758, 0.759, 0.760, 0.761, 0.761, 0.762, 0.763, 0.764, 0.764,
   0.765, 0.766, 0.766, 0.767, 0.768, 0.769, 0.769, 0.770, 0.771, 0.772, 0.772, 0.773, 0.774, 0.774, 0.775, 0.776, 0.777, 0.777, 0.778, 0.779,
@@ -122,7 +103,7 @@ const PROGMEM float Lambda_Conversion[753] {
   8.466, 8.587, 8.710, 8.837, 8.966, 9.099, 9.235, 9.374, 9.516, 9.662, 9.811, 9.963, 10.119
 };
 
-//Oxygen Conversion Lookup Table. (ADC 307-854).
+// Oxygen Conversion Lookup Table. (ADC 307-854).
 const PROGMEM float Oxygen_Conversion[548] {
   00.00, 00.04, 00.08, 00.13, 00.17, 00.21, 00.25, 00.30, 00.34, 00.38, 00.42, 00.47, 00.51, 00.55, 00.59, 00.64, 00.68, 00.72, 00.76, 00.81,
   00.85, 00.89, 00.93, 00.98, 01.02, 01.06, 01.10, 01.15, 01.19, 01.23, 01.27, 01.31, 01.36, 01.40, 01.44, 01.48, 01.53, 01.57, 01.61, 01.65,
@@ -154,58 +135,58 @@ const PROGMEM float Oxygen_Conversion[548] {
   20.72, 20.75, 20.78, 20.82, 20.85, 20.88, 20.92, 20.95
 };
 
-//Function for transfering SPI data to the CJ125.
+// Function for transfering SPI data to the CJ125.
 uint16_t COM_SPI(uint16_t TX_data) {
 
-  //Configure SPI for CJ125 controller.
+  // Configure SPI for CJ125 controller.
   SPI.setDataMode(SPI_MODE1);
   SPI.setClockDivider(SPI_CLOCK_DIV128);
 
-  //Set chip select pin low, chip in use.
+  // Set chip select pin low, chip in use.
   digitalWrite(CJ125_NSS_PIN, LOW);
 
-  //Transmit request.
+  // Transmit request.
   uint16_t Response =  SPI.transfer16(TX_data);
 
-  //Set chip select pin high, chip not in use.
+  // Set chip select pin high, chip not in use.
   digitalWrite(CJ125_NSS_PIN, HIGH);
 
   return Response;
 
 }
 
-//Temperature regulating software (PID).
+// Temperature regulating software (PID).
 int Heater_PID_Control(int input) {
 
-  //Calculate error term.
+  // Calculate error term.
   int error = adcValue_UR_Optimal - input;
 
-  //Set current position.
+  // Set current position.
   int position = input;
 
-  //Calculate proportional term.
+  // Calculate proportional term.
   float pTerm = -pGain * error;
 
-  //Calculate the integral state with appropriate limiting.
+  // Calculate the integral state with appropriate limiting.
   iState += error;
 
   if (iState > iMax) iState = iMax;
   if (iState < iMin) iState = iMin;
 
-  //Calculate the integral term.
+  // Calculate the integral term.
   float iTerm = -iGain * iState;
 
-  //Calculate the derivative term.
+  // Calculate the derivative term.
   float dTerm = -dGain * (dState - position);
   dState = position;
 
-  //Calculate regulation (PI).
+  // Calculate regulation (PI).
   int RegulationOutput = pTerm + iTerm + dTerm;
 
-  //Set maximum heater output (full power).
+  // Set maximum heater output (full power).
   if (RegulationOutput > 255) RegulationOutput = 255;
 
-  //Set minimum heater value (cooling).
+  // Set minimum heater value (cooling).
   if (RegulationOutput < 0.0) RegulationOutput = 0;
 
   //Return calculated PWM output.
@@ -213,36 +194,36 @@ int Heater_PID_Control(int input) {
 
 }
 
-//0-5V analog output for Speeduino
+// 0-5V analog output for Speeduino
 void UpdateAnalogOutput() {
 
-  //Local constants.
+  // Local constants.
   const float AirFuelRatioOctane = 14.70;
-  const int maximumOutput = 255; /* 1V */
+  const int maximumOutput = 255; /* 5V */
   const int minimumOutput = 0;  /* 0V */
 
-  //Local variables.
+  // Local variables.
   int analogOutput = 0;
   float lambdaAFR = Lookup_Lambda(adcValue_UA) * AirFuelRatioOctane;
 
-  //Convert lambda value to PWM output.
+  // Convert lambda value to PWM output.
   analogOutput = map(lambdaAFR * 100, 2000, 1000, minimumOutput, maximumOutput);
 
-  //Make sure we do not exceed maximum values.
+  // Make sure we do not exceed maximum values.
   if (analogOutput > maximumOutput) analogOutput = maximumOutput;
   if (analogOutput < minimumOutput) analogOutput = minimumOutput;
 
-  //Set PWM output.
+  // Set PWM output.
   analogWrite(ANALOG_OUTPUT_PIN, analogOutput);
 }
 
-//Lookup Lambda Value.
+// Lookup Lambda Value.
 float Lookup_Lambda(int Input_ADC) {
 
-  //Declare and set default return value.
+  // Declare and set default return value.
   float LAMBDA_VALUE = 0;
 
-  //Validate ADC range for lookup table.
+  // Validate ADC range for lookup table.
   if (Input_ADC >= 39 && Input_ADC <= 791) {
     LAMBDA_VALUE = pgm_read_float_near(Lambda_Conversion + (Input_ADC - 39));
   }
@@ -255,103 +236,103 @@ float Lookup_Lambda(int Input_ADC) {
     LAMBDA_VALUE = 0.750;
   }
 
-  //Return value.
+  // Return value.
   return LAMBDA_VALUE;
 
 }
 
-//Lookup Oxygen Content.
+// Lookup Oxygen Content.
 float Lookup_Oxygen(int Input_ADC) {
 
-  //Declare and set default return value.
+  // Declare and set default return value.
   float OXYGEN_CONTENT = 0;
 
-  //Validate ADC range for lookup table.
+  // Validate ADC range for lookup table.
   if (Input_ADC > 854) Input_ADC = 854;
 
   if (Input_ADC >= 307 && Input_ADC <= 854) {
     OXYGEN_CONTENT = pgm_read_float_near(Oxygen_Conversion + (Input_ADC - 307));
   }
 
-  //Return value.
+  // Return value.
   return OXYGEN_CONTENT;
 
 }
 
-//Function to set up device for operation.
+// Function to set up device for operation.
 void setup() {
 
-  //Set up SPI.
-  SPI.begin();  /* Note, SPI will disable the bult in LED. */
+  // Set up SPI.
+  SPI.begin();
   SPI.setBitOrder(MSBFIRST);
 
-  //Set up digital output pins.
+  // Set up digital output pins.
   pinMode(CJ125_NSS_PIN, OUTPUT);
   pinMode(LED_STATUS_POWER, OUTPUT);
   pinMode(LED_STATUS_HEATER, OUTPUT);
   pinMode(HEATER_OUTPUT_PIN, OUTPUT);
 
-  //Set initial values.
+  // Set initial values.
   digitalWrite(CJ125_NSS_PIN, HIGH);
   digitalWrite(LED_STATUS_POWER, LOW);
-  analogWrite(LED_STATUS_HEATER, 0);
+  analogWrite(LED_STATUS_HEATER, 0); /* PWM is initially off. */
   analogWrite(HEATER_OUTPUT_PIN, 0); /* PWM is initially off. */
   analogWrite(ANALOG_OUTPUT_PIN, 0); /* PWM is initially off. */
 
-  //Start of operation. (Test LED's).
+  // Start of operation. (Test LED's).
   digitalWrite(LED_STATUS_POWER, HIGH);
   analogWrite(LED_STATUS_HEATER, 255);
   delay(200);
   digitalWrite(LED_STATUS_POWER, LOW);
   analogWrite(LED_STATUS_HEATER, 0);
 
-  //Start main function.
+  // Start main function.
   start();
 
 }
 
 void start() {
 
-  //Wait until everything is ready.
+  // Wait until everything is ready.
   while (adcValue_UB < UBAT_MIN || CJ125_Status != CJ125_DIAG_REG_STATUS_OK) {
 
-    //Read CJ125 diagnostic register from SPI.
+    // Read CJ125 diagnostic register from SPI.
     CJ125_Status = COM_SPI(CJ125_DIAG_REG_REQUEST);
 
-    //Read input voltage.
+    // Read input voltage.
     adcValue_UB = analogRead(UB_ANALOG_INPUT_PIN);
 
     delay(1000);
   }
 
-  //Start of operation. (Start Power LED).
+  // Start of operation. (Start Power LED).
   analogWrite(LED_STATUS_POWER, 255);
 
-  //Set CJ125 in calibration mode.
+  // Set CJ125 in calibration mode.
   COM_SPI(CJ125_INIT_REG1_MODE_CALIBRATE);
 
-  //Let values settle.
+  // Let values settle.
   delay(500);
 
-  //Store optimal values before leaving calibration mode.
+  // Store optimal values before leaving calibration mode.
   adcValue_UA_Optimal = analogRead(UA_ANALOG_INPUT_PIN);
   adcValue_UR_Optimal = analogRead(UR_ANALOG_INPUT_PIN);
 
-  //Update analog output, display the optimal value.
+  // Update analog output, display the optimal value.
   adcValue_UA = adcValue_UA_Optimal;
   UpdateAnalogOutput();
 
-  //Set CJ125 in normal operation mode.
-  //COM_SPI(CJ125_INIT_REG1_MODE_NORMAL_V8);  /* V=0 */
+  // Set CJ125 in normal operation mode.
+  // COM_SPI(CJ125_INIT_REG1_MODE_NORMAL_V8);  /* V=0 */
   COM_SPI(CJ125_INIT_REG1_MODE_NORMAL_V17);  /* V=1 */
 
   /* Heat up sensor. This is described in detail in the datasheet of the LSU 4.9 sensor with a
      condensation phase and a ramp up face before going in to PID control. */
 
-  //Calculate supply voltage.
+  // Calculate supply voltage.
   float SupplyVoltage = (((float)adcValue_UB / 1023 * 5) / 10000) * 110000;
 
-  //Condensation phase, 2V for 5s.
+  // Condensation phase, 2V for 5s.
   int CondensationPWM = (2 / SupplyVoltage) * 255;
   analogWrite(HEATER_OUTPUT_PIN, CondensationPWM);
 
@@ -368,30 +349,30 @@ void start() {
 
   }
 
-  //Ramp up phase, +0.4V / s until 100% PWM from 8.5V.
+  // Ramp up phase, +0.4V / s until 100% PWM from 8.5V.
   float UHeater = 8.5;
   while (UHeater < 13.0 && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN) {
 
-    //Set heater output during ramp up.
+    // Set heater output during ramp up.
     CondensationPWM = (UHeater / SupplyVoltage) * 255;
 
-    if (CondensationPWM > 255) CondensationPWM = 255; /*If supply voltage is less than 13V, maximum is 100% PWM*/
+    if (CondensationPWM > 255) CondensationPWM = 255; /* If supply voltage is less than 13V, maximum is 100% PWM */
 
     analogWrite(HEATER_OUTPUT_PIN, CondensationPWM);
 
-    // Pulse Heater LED in condensation phase.
+    // Pulse Heater LED in condensation phase (~1 second)
     for (int i = 0; i < 255; i++)
     {
       analogWrite(LED_STATUS_HEATER, 255 - i);
       delayMicroseconds(3922);
     }
 
-    //Increment Voltage.
+    // Increment Voltage.
     UHeater += 0.4;
 
   }
 
-  //Heat until temperature optimum is reached or exceeded (lower value is warmer).
+  // Heat until temperature optimum is reached or exceeded (lower value is warmer).
   while (analogRead(UR_ANALOG_INPUT_PIN) > adcValue_UR_Optimal && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN) {
 
     // Pulse Heater LED in condensation phase.
@@ -402,67 +383,55 @@ void start() {
     }
   }
 
-  //Heating phase finished, hand over to PID-control. Turn on LED and turn off heater.
+  // Heating phase finished, hand over to PID-control. Turn on LED and turn off heater.
   digitalWrite(LED_STATUS_HEATER, HIGH);
   analogWrite(HEATER_OUTPUT_PIN, 0);
 
 }
 
-//Infinite loop.
+// Infinite loop.
 void loop() {
 
-  //Update CJ125 diagnostic register from SPI.
+  // Update CJ125 diagnostic register from SPI.
   CJ125_Status = COM_SPI(CJ125_DIAG_REG_REQUEST);
 
-  //Update analog inputs.
+  // Update analog inputs.
   adcValue_UA = analogRead(UA_ANALOG_INPUT_PIN);
   adcValue_UR = analogRead(UR_ANALOG_INPUT_PIN);
   adcValue_UB = analogRead(UB_ANALOG_INPUT_PIN);
 
-  //Adjust PWM output by calculated PID regulation.
+  // Adjust PWM output by calculated PID regulation.
   if (adcValue_UR < 500 || adcValue_UR_Optimal != 0 || adcValue_UB > UBAT_MIN) {
 
-    //Calculate and set new heater output.
+    // Calculate and set new heater output.
     HeaterOutput = Heater_PID_Control(adcValue_UR);
     analogWrite(HEATER_OUTPUT_PIN, HeaterOutput);
 
   } else {
 
-    //Turn off heater if we are not in PID control.
+    // Turn off heater if we are not in PID control.
     HeaterOutput = 0;
     analogWrite(HEATER_OUTPUT_PIN, HeaterOutput);
 
   }
 
-  //If power is lost, "reset" the device.
-  if (adcValue_UB < UBAT_MIN) {
-
-    //Turn of status LEDs.
-    digitalWrite(LED_STATUS_POWER, LOW);
-    digitalWrite(LED_STATUS_HEATER, LOW);
-
-    //Re-start() and wait for power.
-    start();
-
-  }
-
-  //Display on serial port at defined rate. Comma separate values, readable by frontends.
+  // Display on serial port at defined rate. Comma separate values, readable by frontends.
   if ( (100 / SERIAL_RATE) ==  serial_counter) {
 
-    //Reset counter.
+    // Reset counter.
     serial_counter = 0;
 
-    //Calculate Lambda Value.
+    // Calculate Lambda Value.
     float LAMBDA_VALUE = Lookup_Lambda(adcValue_UA);
 
-    //Calculate Oxygen Content.
+    // Calculate Oxygen Content.
     float OXYGEN_CONTENT = Lookup_Oxygen(adcValue_UA);
 
-    //Update analog output.
+    // Update analog output.
     UpdateAnalogOutput();
   }
 
-  //Increment serial output counter and delay for next cycle. The PID requires to be responsive but we don't need to flood the serial port.
+  // Increment serial output counter and delay for next cycle. The PID requires to be responsive but we don't need to flood the serial port.
   serial_counter++;
   delay(10);
 
