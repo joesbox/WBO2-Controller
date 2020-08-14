@@ -206,14 +206,14 @@ void UpdateAnalogOutput() {
   int analogOutput = 0;
   float lambdaAFR = Lookup_Lambda(adcValue_UA) * AirFuelRatioOctane;
 
-  // Convert lambda value to PWM output.
+  // Convert lambda value to analog output.
   analogOutput = map(lambdaAFR * 100, 2000, 1000, minimumOutput, maximumOutput);
 
   // Make sure we do not exceed maximum values.
   if (analogOutput > maximumOutput) analogOutput = maximumOutput;
   if (analogOutput < minimumOutput) analogOutput = minimumOutput;
 
-  // Set PWM output.
+  // Set analog output.
   analogWrite(ANALOG_OUTPUT_PIN, analogOutput);
 }
 

@@ -1,1 +1,1 @@
-For more information please visit www.bylund-automotive.com.
+Check http://wiki.joeblogs.co for more information.
