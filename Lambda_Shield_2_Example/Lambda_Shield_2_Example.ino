@@ -6,6 +6,7 @@
     Version history:
     2020-08-14        v1.0.0        Changed pinout to suit ATTin1614. Removed serial output debugging & changed analog output signal to suit Speeduino. Removed power loss reset due to single supply.
     2020-08-16        v1.0.1        Updated error status handling.
+    2021-02-07        v1.0.2        Corrected heater control routines during setup. Updated status LED sequences.
 
 */
 
@@ -278,7 +279,7 @@ void UpdateAnalogOutput()
   // Convert lambda value to analog output.
   analogOutput = map(lambdaAFR * 100, 2000, 1000, minimumOutput, maximumOutput);
 
-  // Make sure we do not exceed maximum values.
+  // Limit check output value
   if (analogOutput > maximumOutput)
   {
     analogOutput = maximumOutput;
@@ -379,10 +380,9 @@ void start()
     adcValue_UB = analogRead(UB_ANALOG_INPUT_PIN);
 
     UpdateLEDStatus();
-    //delay(1000);
   }
 
-  // Start of operation. (Start Power LED, stop heater LED).
+  // Start of operation. (Power LED on, heater LED off).
   digitalWrite(LED_STATUS_POWER, HIGH);
   analogWrite(LED_STATUS_HEATER, 0);
 
@@ -406,6 +406,7 @@ void start()
 
   /* Heat up sensor. This is described in detail in the datasheet of the LSU 4.9 sensor with a
      condensation phase and a ramp up face before going in to PID control. */
+  int ledBlink = 255;
 
   // Calculate supply voltage.
   float SupplyVoltage = (((float)adcValue_UB / 1023 * 5) / 10000) * 110000;
@@ -417,13 +418,23 @@ void start()
   int t = 0;
   while (t < 5 && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN)
   {
-    // Pulse Heater LED in condensation phase.
-    for (int i = 0; i < 255; i++)
-    {
-      analogWrite(LED_STATUS_HEATER, i);
-      delayMicroseconds(3922);
-    }
     t += 1;
+
+    // Blink heater LED once during condensation phase
+    for (int i = 0; i < 2; i++)
+    {
+      analogWrite(LED_STATUS_HEATER, ledBlink);
+      delay(100);
+      if (ledBlink == 0)
+      {
+        ledBlink = 255;
+      }
+      else
+      {
+        ledBlink = 0;
+      }
+    }
+    delay(800); /* Delay for the remainder of the second */
   }
 
   // Ramp up phase, +0.4V/s until 100% PWM from 8.5V.
@@ -440,29 +451,45 @@ void start()
 
     analogWrite(HEATER_OUTPUT_PIN, CondensationPWM);
 
-    // Pulse Heater LED in condensation phase (~1 second)
-    for (int i = 0; i < 255; i++)
-    {
-      analogWrite(LED_STATUS_HEATER, 255 - i);
-      delayMicroseconds(3922);
-    }
-
     // Increment Voltage.
     UHeater += 0.4;
+
+    // Blink heater LED 2 times during condensation phase
+    for (int i = 0; i < 4; i++)
+    {
+      analogWrite(LED_STATUS_HEATER, ledBlink);
+      delay(150);
+      if (ledBlink == 0)
+      {
+        ledBlink = 255;
+      }
+      else
+      {
+        ledBlink = 0;
+      }
+    }
+    delay(400); /* Delay for the remainder of the second */
   }
 
   // Heat until temperature optimum is reached or exceeded (lower value is warmer).
   while (analogRead(UR_ANALOG_INPUT_PIN) > adcValue_UR_Optimal && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN)
   {
-    // Pulse Heater LED in condensation phase.
+    // Pulse Heater LED in heating phase.
     for (int i = 0; i < 255; i++)
     {
-      analogWrite(LED_STATUS_HEATER, i);
-      delayMicroseconds(3922);
+      analogWrite(LED_STATUS_HEATER, brightness);
+      brightness = brightness + fadeAmount;
+
+      if (brightness <= 0 || brightness >= 255)
+      {
+        fadeAmount = -fadeAmount;
+      }
+      delay(20);
     }
   }
 
-  // Heating phase finished, hand over to PID-control. Turn on LED and turn off heater.
+  // Heating phase finished, hand over to PID-control. Turn on LEDs, turn off heater.
+  digitalWrite(LED_STATUS_POWER, HIGH);
   analogWrite(LED_STATUS_HEATER, 255);
   analogWrite(HEATER_OUTPUT_PIN, 0);
 }
