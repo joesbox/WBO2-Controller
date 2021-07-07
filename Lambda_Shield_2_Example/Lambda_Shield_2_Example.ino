@@ -4,10 +4,10 @@
     Originally forked from https://github.com/Bylund/Lambda-Shield-2-Example
 
     Version history:
-    2020-08-14        v1.0.0        Changed pinout to suit ATTin1614. Removed serial output debugging & changed analog output signal to suit Speeduino. Removed power loss reset due to single supply.
-    2020-08-16        v1.0.1        Updated error status handling.
-    2021-02-07        v1.0.2        Corrected heater control routines during setup. Updated status LED sequences.
     2021-02-09        v1.0.3        Removed unused oxygen lookup table and function. Updated analog output function. Added calibration output voltages during warm-up phase.
+    2021-02-07        v1.0.2        Corrected heater control routines during setup. Updated status LED sequences.
+    2020-08-16        v1.0.1        Updated error status handling.
+    2020-08-14        v1.0.0        Changed pinout to suit ATTin1614. Removed serial output debugging & changed analog output signal to suit Speeduino. Removed power loss reset due to single supply.
 */
 
 // Define included headers.
@@ -363,7 +363,7 @@ void start()
   COM_SPI(CJ125_INIT_REG1_MODE_NORMAL_V17); /* V=1 */
 
   /* Heat up sensor. This is described in detail in the datasheet of the LSU 4.9 sensor with a
-     condensation phase and a ramp up face before going in to PID control. */
+     condensation phase and a ramp up phase before going in to PID control. */
   int ledBlink = 255;
 
   // Calculate supply voltage.
