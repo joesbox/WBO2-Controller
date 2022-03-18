@@ -4,6 +4,7 @@
     Originally forked from https://github.com/Bylund/Lambda-Shield-2-Example
 
     Version history:
+    2022-03-18        v1.0.4        Corrected analogue output gradient and intercept terms.
     2021-02-09        v1.0.3        Removed unused oxygen lookup table and function. Updated analog output function. Added calibration output voltages during warm-up phase.
     2021-02-07        v1.0.2        Corrected heater control routines during setup. Updated status LED sequences.
     2020-08-16        v1.0.1        Updated error status handling.
@@ -247,8 +248,8 @@ void UpdateAnalogOutput()
   // Local constants.
   const int maximumOutput = 255; /* 4.3V */
   const int minimumOutput = 0;   /* 0V */
-  const float m = 6.6154;  /* Gradient term */
-  const float c = 4.9615; /* Intercept term */
+  const float m = 27.217;  /* Gradient term */
+  const float c = 20.2413; /* Intercept term */
 
   // Local variables.
   int analogOutput = 0;
@@ -359,7 +360,7 @@ void start()
   UpdateAnalogOutput();
 
   // Set CJ125 in normal operation mode.
-  // COM_SPI(CJ125_INIT_REG1_MODE_NORMAL_V8);  /* V=0 */
+  //COM_SPI(CJ125_INIT_REG1_MODE_NORMAL_V8);  /* V=0 */
   COM_SPI(CJ125_INIT_REG1_MODE_NORMAL_V17); /* V=1 */
 
   /* Heat up sensor. This is described in detail in the datasheet of the LSU 4.9 sensor with a
@@ -367,8 +368,8 @@ void start()
   int ledBlink = 255;
 
   // Calculate supply voltage.
-  float SupplyVoltage = (((float)adcValue_UB / 1023 * 5) / 10000) * 110000;
-
+  float SupplyVoltage = map(adcValue_UB, 0, 1023, 0, 15);
+  
   // Condensation phase, 2V for 5s.
   int CondensationPWM = (2 / SupplyVoltage) * 255;
   analogWrite(HEATER_OUTPUT_PIN, CondensationPWM);
