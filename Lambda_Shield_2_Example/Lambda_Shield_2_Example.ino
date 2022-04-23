@@ -4,6 +4,7 @@
     Originally forked from https://github.com/Bylund/Lambda-Shield-2-Example
 
     Version history:
+    2022-04-23        v1.0.5        Added 4x7 digit LED display in place of status LEDs. Compatibility with hardware v1.1.
     2022-03-18        v1.0.4        Corrected analogue output gradient and intercept terms.
     2021-02-09        v1.0.3        Removed unused oxygen lookup table and function. Updated analog output function. Added calibration output voltages during warm-up phase.
     2021-02-07        v1.0.2        Corrected heater control routines during setup. Updated status LED sequences.
@@ -14,6 +15,13 @@
 // Define included headers.
 #include <SPI.h>
 #include <elapsedMillis.h>
+#include <TM1637TinyDisplay.h>
+
+// Display module connection pins (Digital Pins)
+#define CLK 4
+#define DIO 5
+
+TM1637TinyDisplay LEDdisplay(CLK, DIO);
 
 // Define CJ125 registers used.
 #define CJ125_IDENT_REG_REQUEST 0x4800         /* Identify request, gives revision of the chip. */
@@ -31,8 +39,8 @@
 
 // Define pin assignments (ATTiny1614)
 #define CJ125_NSS_PIN 0       /* Pin used for chip select in SPI communication. */
-#define LED_STATUS_POWER 4    /* Pin used for power the status LED, indicating we have power. */
-#define LED_STATUS_HEATER 5   /* Pin used for the heater status LED, indicating heater activity. */
+//#define LED_STATUS_POWER 4    /* Pin used for power the status LED, indicating we have power. */
+//#define LED_STATUS_HEATER 5   /* Pin used for the heater status LED, indicating heater activity. */
 #define HEATER_OUTPUT_PIN 3   /* Pin used for the PWM output to the heater circuit. */
 #define ANALOG_OUTPUT_PIN 2   /* Pin used for DAC output 0 to 4.3V. */
 #define UB_ANALOG_INPUT_PIN 1 /* Analog input for power supply.*/
@@ -44,17 +52,18 @@
 elapsedMillis statusUpdate;
 
 // Global variables.
-int adcValue_UA = 0;         /* ADC value read from the CJ125 UA output pin */
-int adcValue_UR = 0;         /* ADC value read from the CJ125 UR output pin */
-int adcValue_UB = 0;         /* ADC value read from the voltage divider caluclating Ubat */
-int adcValue_UA_Optimal = 0; /* UA ADC value stored when CJ125 is in calibration mode, λ=1 */
-int adcValue_UR_Optimal = 0; /* UR ADC value stored when CJ125 is in calibration mode, optimal temperature */
-int HeaterOutput = 0;        /* Current PWM output value (0-255) of the heater output pin */
-int CJ125_Status = 0;        /* Latest stored DIAG registry response from the CJ125 */
-int brightness = 0;          /* Heater/status LED brighteness */
-int fadeAmount = 5;          /* Heater/status LED fade ammount */
-int updateInterval = 50;     /* Update interval for status LED timing */
-bool toggle = false;         /* Status LED toggle */
+int adcValue_UA = 0;                                /* ADC value read from the CJ125 UA output pin */
+int adcValue_UR = 0;                                /* ADC value read from the CJ125 UR output pin */
+int adcValue_UB = 0;                                /* ADC value read from the voltage divider caluclating Ubat */
+int adcValue_UA_Optimal = 0;                        /* UA ADC value stored when CJ125 is in calibration mode, λ=1 */
+int adcValue_UR_Optimal = 0;                        /* UR ADC value stored when CJ125 is in calibration mode, optimal temperature */
+int HeaterOutput = 0;                               /* Current PWM output value (0-255) of the heater output pin */
+int CJ125_Status = 0;                               /* Latest stored DIAG registry response from the CJ125 */
+int brightness = 0;                                 /* Heater/status LED brighteness */
+int fadeAmount = 5;                                 /* Heater/status LED fade ammount */
+int updateInterval = 50;                            /* Update interval for status LED timing */
+bool toggle = false;                                /* Status update toggle */
+bool faulted = false;                               /* Fault was raised */
 
 // PID regulation variables.
 int dState;              /* Last position input. */
@@ -107,6 +116,38 @@ const PROGMEM float Lambda_Conversion[753] {
   8.466, 8.587, 8.710, 8.837, 8.966, 9.099, 9.235, 9.374, 9.516, 9.662, 9.811, 9.963, 10.119
 };
 
+const PROGMEM float Oxygen_Conversion[256] {
+  11.03, 11.07, 11.10, 11.14, 11.18, 11.22, 11.25, 11.29, 11.33, 11.37, 11.40, 11.44, 11.48, 11.52, 11.55, 11.59, 11.63, 11.67, 11.70, 11.74,
+  11.78, 11.82, 11.85, 11.89, 11.93, 11.97, 12.00, 12.04, 12.08, 12.12, 12.15, 12.19, 12.23, 12.27, 12.30, 12.34, 12.38, 12.42, 12.45, 12.49,
+  12.53, 12.57, 12.60, 12.64, 12.68, 12.72, 12.75, 12.79, 12.83, 12.87, 12.90, 12.94, 12.98, 13.01, 13.05, 13.09, 13.13, 13.16, 13.20, 13.24,
+  13.28, 13.31, 13.35, 13.39, 13.43, 13.46, 13.50, 13.54, 13.58, 13.61, 13.65, 13.69, 13.73, 13.76, 13.80, 13.84, 13.88, 13.91, 13.95, 13.99,
+  14.03, 14.06, 14.10, 14.14, 14.18, 14.21, 14.25, 14.29, 14.33, 14.36, 14.40, 14.44, 14.48, 14.51, 14.55, 14.59, 14.63, 14.66, 14.70, 14.74,
+  14.78, 14.81, 14.85, 14.89, 14.92, 14.96, 15.00, 15.04, 15.07, 15.11, 15.15, 15.19, 15.22, 15.26, 15.30, 15.34, 15.37, 15.41, 15.45, 15.49,
+  15.52, 15.56, 15.60, 15.64, 15.67, 15.71, 15.75, 15.79, 15.82, 15.86, 15.90, 15.94, 15.97, 16.01, 16.05, 16.09, 16.12, 16.16, 16.20, 16.24,
+  16.27, 16.31, 16.35, 16.39, 16.42, 16.46, 16.50, 16.54, 16.57, 16.61, 16.65, 16.69, 16.72, 16.76, 16.80, 16.83, 16.87, 16.91, 16.95, 16.98,
+  17.02, 17.06, 17.10, 17.13, 17.17, 17.21, 17.25, 17.28, 17.32, 17.36, 17.40, 17.43, 17.47, 17.51, 17.55, 17.58, 17.62, 17.66, 17.70, 17.73,
+  17.77, 17.81, 17.85, 17.88, 17.92, 17.96, 18.00, 18.03, 18.07, 18.11, 18.15, 18.18, 18.22, 18.26, 18.30, 18.33, 18.37, 18.41, 18.45, 18.48,
+  18.52, 18.56, 18.60, 18.63, 18.67, 18.71, 18.74, 18.78, 18.82, 18.86, 18.89, 18.93, 18.97, 19.01, 19.04, 19.08, 19.12, 19.16, 19.19, 19.23,
+  19.27, 19.31, 19.34, 19.38, 19.42, 19.46, 19.49, 19.53, 19.57, 19.61, 19.64, 19.68, 19.72, 19.76, 19.79, 19.83, 19.87, 19.91, 19.94, 19.98,
+  20.02, 20.06, 20.09, 20.13, 20.17, 20.21, 20.24, 20.28, 20.32, 20.36, 20.39, 20.43, 20.47, 20.51, 20.54, 20.58
+};
+
+const uint8_t PWR[1][4] = {
+  { 0x1c, 0x86, 0xbf, 0x6d }
+};
+
+const uint8_t CAL_1[3][4] = {
+  { 0x39, 0x5c, 0x54, 0x5e },  // Frame 0
+  { 0x77, 0x71, 0x50, 0x48 },  // Frame 1
+  { 0x06, 0xe6, 0x07, 0x00 },  // Frame 2
+};
+
+const uint8_t CAL_2[3][4] = {
+  { 0x76, 0x79, 0x77, 0x78 },  // Frame 0
+  { 0x77, 0x71, 0x50, 0x48 },  // Frame 1
+  { 0x5b, 0xbf, 0x6d, 0x7f },  // Frame 2
+};
+
 void UpdateLEDStatus()
 {
   // CJ125 error status handling.
@@ -116,57 +157,34 @@ void UpdateLEDStatus()
     switch (CJ125_Status)
     {
       case CJ125_DIAG_REG_STATUS_OK:
-        // Status OK. Keep the status LEDs on
-        digitalWrite(LED_STATUS_POWER, HIGH);
-        analogWrite(LED_STATUS_HEATER, 255);
+        // Clear fault flag. Clear display
+        if (faulted)
+        {
+          faulted = false;
+          LEDdisplay.clear();
+        }
         updateInterval = 200;
         break;
 
       case CJ125_DIAG_REG_STATUS_NOPOWER:
-        // No power. Turn off the power LED and pulse the heater LED
-        updateInterval = 20;
-        digitalWrite(LED_STATUS_POWER, LOW);
-        analogWrite(LED_STATUS_HEATER, brightness);
-
-        brightness = brightness + fadeAmount;
-
-        if (brightness <= 0 || brightness >= 255)
-        {
-          fadeAmount = -fadeAmount;
-        }
+        // No power.
+        faulted = true;
+        LEDdisplay.showString("No PWR");
+        updateInterval = 200;
         break;
 
       case CJ125_DIAG_REG_STATUS_NOSENSOR:
-        // No sensor. Flash power LED. Turn off the heater LED
-        analogWrite(LED_STATUS_HEATER, 0);
-        if (toggle)
-        {
-          digitalWrite(LED_STATUS_POWER, HIGH);
-          toggle = false;
-        }
-        else
-        {
-          digitalWrite(LED_STATUS_POWER, LOW);
-          toggle = true;
-        }
+        // No sensor.
+        faulted = true;
+        LEDdisplay.showString("No sensor");
         updateInterval = 200;
         break;
 
       default:
-        // Generic error. Alternate LEDs
+        // Generic error.
+        faulted = true;
+        LEDdisplay.showString("Fault");
         updateInterval = 200;
-        if (toggle)
-        {
-          digitalWrite(LED_STATUS_POWER, HIGH);
-          analogWrite(LED_STATUS_HEATER, 0);
-          toggle = false;
-        }
-        else
-        {
-          digitalWrite(LED_STATUS_POWER, LOW);
-          analogWrite(LED_STATUS_HEATER, 255);
-          toggle = true;
-        }
         break;
     }
   }
@@ -252,7 +270,7 @@ void UpdateAnalogOutput()
   const float c = 20.2413; /* Intercept term */
 
   // Local variables.
-  int analogOutput = 0;
+  uint8_t analogOutput = 0;
 
   // Calculate ADC value from Lambda
   float lambdaADC = (m * Lookup_Lambda(adcValue_UA)) - c;
@@ -266,6 +284,15 @@ void UpdateAnalogOutput()
   if (analogOutput < minimumOutput)
   {
     analogOutput = minimumOutput;
+  }
+
+  // Update the display - using AFR
+  if (!faulted)
+  {
+    float afr = pgm_read_float_near(Oxygen_Conversion + analogOutput);
+    int afri = (afr * 100);
+
+    LEDdisplay.showNumberDec(afri, 64, false, 4, 0);
   }
 
   // Set analog output.
@@ -307,21 +334,18 @@ void setup()
 
   // Set up digital output pins.
   pinMode(CJ125_NSS_PIN, OUTPUT);
-  pinMode(LED_STATUS_POWER, OUTPUT);
-  pinMode(LED_STATUS_HEATER, OUTPUT);
   pinMode(HEATER_OUTPUT_PIN, OUTPUT);
 
   // Set initial values.
   digitalWrite(CJ125_NSS_PIN, HIGH);
-  digitalWrite(LED_STATUS_POWER, LOW);
-  analogWrite(LED_STATUS_HEATER, 0); /* PWM is initially off. */
   analogWrite(HEATER_OUTPUT_PIN, 0); /* PWM is initially off. */
   analogWrite(ANALOG_OUTPUT_PIN, 0); /* PWM is initially off. */
   DACReference(0x3); /* DAC reference set to 4.3V (maximum for the ATTiny1614) */
 
   // Start of operation. (Power LED on).
-  digitalWrite(LED_STATUS_POWER, HIGH);
-  analogWrite(LED_STATUS_HEATER, 0);
+  LEDdisplay.setBrightness(0x0f);
+  LEDdisplay.setScrolldelay(300);
+  LEDdisplay.showAnimation_P(PWR, FRAMES(PWR), TIME_MS(2750));
 
   // Start main function.
   start();
@@ -342,8 +366,6 @@ void start()
   }
 
   // Start of operation. (Power LED on, heater LED off).
-  digitalWrite(LED_STATUS_POWER, HIGH);
-  analogWrite(LED_STATUS_HEATER, 0);
 
   // Set CJ125 in calibration mode.
   COM_SPI(CJ125_INIT_REG1_MODE_CALIBRATE);
@@ -369,7 +391,7 @@ void start()
 
   // Calculate supply voltage.
   float SupplyVoltage = map(adcValue_UB, 0, 1023, 0, 15);
-  
+
   // Condensation phase, 2V for 5s.
   int CondensationPWM = (2 / SupplyVoltage) * 255;
   analogWrite(HEATER_OUTPUT_PIN, CondensationPWM);
@@ -383,25 +405,14 @@ void start()
   {
     t += 1;
 
-    // Blink heater LED once/sec during condensation phase
-    for (int i = 0; i < 2; i++)
-    {
-      analogWrite(LED_STATUS_HEATER, ledBlink);
-      delay(100);
-      if (ledBlink == 0)
-      {
-        ledBlink = 255;
-      }
-      else
-      {
-        ledBlink = 0;
-      }
-    }
-    delay(800); /* Delay for the remainder of the second */
+    // Condensation phase
+    //LEDdisplay.showString("COND CAL=1.92V");
+    LEDdisplay.showAnimation_P(CAL_1, FRAMES(CAL_1), TIME_MS(750));
+    delay(1000); // 5 seconds total
   }
 
-  // Second calibration voltage. ADC 247, 4.17V, 1.38 Lambda
-  int secondCal = 247;
+  // Second calibration voltage. ADC 255, 5.0V, 1.4 Lambda
+  int secondCal = 255;
   analogWrite(ANALOG_OUTPUT_PIN, secondCal);
 
   // Ramp up phase, +0.4V/s until 100% PWM from 8.5V.
@@ -421,44 +432,23 @@ void start()
     // Increment Voltage.
     UHeater += 0.4;
 
-    // Blink heater LED 2 times/sec during heat-up phase
-    for (int i = 0; i < 4; i++)
-    {
-      analogWrite(LED_STATUS_HEATER, ledBlink);
-      delay(150);
-      if (ledBlink == 0)
-      {
-        ledBlink = 255;
-      }
-      else
-      {
-        ledBlink = 0;
-      }
-    }
-    delay(400); /* Delay for the remainder of the second */
+    // Heat-up phase
+    LEDdisplay.showAnimation_P(CAL_2, FRAMES(CAL_2), TIME_MS(750));
+    //LEDdisplay.showString("HEAT CAL=L1.4");
+
+    delay(1000); //0.4V/s
   }
 
   // Heat until temperature optimum is reached or exceeded (lower value is warmer).
   while (analogRead(UR_ANALOG_INPUT_PIN) > adcValue_UR_Optimal && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN)
   {
-    // Pulse Heater LED in heating phase.
-    for (int i = 0; i < 255; i++)
-    {
-      analogWrite(LED_STATUS_HEATER, brightness);
-      brightness = brightness + fadeAmount;
-
-      if (brightness <= 0 || brightness >= 255)
-      {
-        fadeAmount = -fadeAmount;
-      }
-      delay(20);
-    }
+    // Display heating phase
+    LEDdisplay.showString("PID");
   }
 
   // Heating phase finished, hand over to PID-control. Turn on LEDs, turn off heater.
-  digitalWrite(LED_STATUS_POWER, HIGH);
-  analogWrite(LED_STATUS_HEATER, 255);
   analogWrite(HEATER_OUTPUT_PIN, 0);
+  LEDdisplay.showString("Ready");
 }
 
 // Infinite loop.
@@ -497,6 +487,10 @@ void loop()
     analogWrite(HEATER_OUTPUT_PIN, 0);
   }
 
-  // Update LED status
-  UpdateLEDStatus();
+  // Update LED status - ignore on first loop
+  if (toggle)
+  {
+    UpdateLEDStatus();
+  }
+  toggle = true;
 }
