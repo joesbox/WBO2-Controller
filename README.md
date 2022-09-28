@@ -4,4 +4,4 @@
 ## WBO2 Controller
 An ATTINY1614 and Bosch CJ125 based LSU 4.9 sensor controller.
 
-Check http://wiki.joeblogs.co for more information.
+Check http://wiki.joeblogs.uk for more information.
