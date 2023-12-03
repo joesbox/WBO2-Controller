@@ -4,6 +4,7 @@
     Originally forked from https://github.com/Bylund/Lambda-Shield-2-Example
 
     Version history:
+    2023-01-28        v1.0.6        Added button and rolling average battery voltage
     2022-04-23        v1.0.5        Added 4x7 digit LED display in place of status LEDs. Compatibility with hardware v1.1.
     2022-03-18        v1.0.4        Corrected analogue output gradient and intercept terms.
     2021-02-09        v1.0.3        Removed unused oxygen lookup table and function. Updated analog output function. Added calibration output voltages during warm-up phase.
@@ -16,6 +17,7 @@
 #include <SPI.h>
 #include <elapsedMillis.h>
 #include <TM1637TinyDisplay.h>
+#include <Bounce2.h>
 
 // Display module connection pins (Digital Pins)
 #define CLK 4
@@ -41,15 +43,17 @@ TM1637TinyDisplay LEDdisplay(CLK, DIO);
 #define CJ125_NSS_PIN 0       /* Pin used for chip select in SPI communication. */
 //#define LED_STATUS_POWER 4    /* Pin used for power the status LED, indicating we have power. */
 //#define LED_STATUS_HEATER 5   /* Pin used for the heater status LED, indicating heater activity. */
-#define HEATER_OUTPUT_PIN 3   /* Pin used for the PWM output to the heater circuit. */
+#define HEATER_OUTPUT_PIN 1  /* Pin used for the PWM output to the heater circuit. */
 #define ANALOG_OUTPUT_PIN 2   /* Pin used for DAC output 0 to 4.3V. */
-#define UB_ANALOG_INPUT_PIN 1 /* Analog input for power supply.*/
+#define UB_ANALOG_INPUT_PIN 3 /* Analog input for power supply.*/
 #define UR_ANALOG_INPUT_PIN 7 /* Analog input for temperature.*/
 #define UA_ANALOG_INPUT_PIN 6 /* Analog input for lambda.*/
+#define BUTTON_INPUT_PIN 11 /* Button input pin */
 
 // Define adjustable parameters.
 #define UBAT_MIN 150 /* Minimum voltage (ADC value) on Ubat to operate */
 elapsedMillis statusUpdate;
+Bounce b = Bounce(); // Instantiate a Bounce object
 
 // Global variables.
 int adcValue_UA = 0;                                /* ADC value read from the CJ125 UA output pin */
@@ -64,6 +68,7 @@ int fadeAmount = 5;                                 /* Heater/status LED fade am
 int updateInterval = 50;                            /* Update interval for status LED timing */
 bool toggle = false;                                /* Status update toggle */
 bool faulted = false;                               /* Fault was raised */
+int disp = 0;                                       /* Display counter */
 
 // PID regulation variables.
 int dState;              /* Last position input. */
@@ -133,7 +138,7 @@ const PROGMEM float Oxygen_Conversion[256] {
 };
 
 const uint8_t PWR[1][4] = {
-  { 0x1c, 0x86, 0xbf, 0x6d }
+  { 0x1c, 0x86, 0xbf, 0x7d }
 };
 
 const uint8_t CAL_1[3][4] = {
@@ -289,10 +294,17 @@ void UpdateAnalogOutput()
   // Update the display - using AFR
   if (!faulted)
   {
-    float afr = pgm_read_float_near(Oxygen_Conversion + analogOutput);
-    int afri = (afr * 100);
+    switch (disp) {
+      case 0:
+        float afr = pgm_read_float_near(Oxygen_Conversion + analogOutput);
+        int afri = (afr * 100);
 
-    LEDdisplay.showNumberDec(afri, 64, false, 4, 0);
+        LEDdisplay.showNumberDec(afri, 64, false, 4, 0);
+        break;
+      case 1:
+        LEDdisplay.showNumberDec(Lookup_Lambda(adcValue_UA) * 100, 64, false, 4, 0);
+        break;
+    }
   }
 
   // Set analog output.
@@ -346,6 +358,10 @@ void setup()
   LEDdisplay.setBrightness(0x0f);
   LEDdisplay.setScrolldelay(300);
   LEDdisplay.showAnimation_P(PWR, FRAMES(PWR), TIME_MS(2750));
+
+  // Set up button
+  b.attach(BUTTON_INPUT_PIN, INPUT_PULLUP); // Attach the debouncer to a pin with INPUT_PULLUP mode
+  b.interval(25); // Use a debounce interval of 25 milliseconds
 
   // Start main function.
   start();
@@ -493,4 +509,40 @@ void loop()
     UpdateLEDStatus();
   }
   toggle = true;
+
+  b.update(); // Update the Bounce instance
+
+  if ( b.fell() ) {  // Call code if button transitions from HIGH to LOW
+    disp += 1;
+    LEDdisplay.clear();
+  }
+  if (disp > 1)
+  {
+    disp = 0;
+  }
+}
+
+float movingAverage(float value) {
+  const byte nvalues = 128;             // Moving average window size
+
+  static byte current = 0;            // Index for current value
+  static byte cvalues = 0;            // Count of values read (<= nvalues)
+  static float sum = 0;               // Rolling sum
+  static float values[nvalues];
+
+  sum += value;
+
+  // If the window is full, adjust the sum by deleting the oldest value
+  if (cvalues == nvalues)
+    sum -= values[current];
+
+  values[current] = value;          // Replace the oldest with the latest
+
+  if (++current >= nvalues)
+    current = 0;
+
+  if (cvalues < nvalues)
+    cvalues += 1;
+
+  return sum / cvalues;
 }
