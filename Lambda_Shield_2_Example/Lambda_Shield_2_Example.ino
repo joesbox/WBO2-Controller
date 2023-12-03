@@ -4,7 +4,7 @@
     Originally forked from https://github.com/Bylund/Lambda-Shield-2-Example
 
     Version history:
-    2023-01-28        v1.0.6        Added button and rolling average battery voltage
+    2023-01-28        v1.0.6        Added button and rolling average battery voltage. Hardware v1.3 compatability
     2022-04-23        v1.0.5        Added 4x7 digit LED display in place of status LEDs. Compatibility with hardware v1.1.
     2022-03-18        v1.0.4        Corrected analogue output gradient and intercept terms.
     2021-02-09        v1.0.3        Removed unused oxygen lookup table and function. Updated analog output function. Added calibration output voltages during warm-up phase.
