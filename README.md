@@ -5,8 +5,6 @@
 ## WBO2 Controller
 An ATTINY1614 and Bosch CJ125 based LSU 4.9 sensor controller.
 
-*PLEASE NOTE* I have had a couple of reports of a bug where fault is displayed in error. I'm working on the firmware to try and resolve this issue. Updates to follow.
-
 Check http://wiki.joeblogs.uk for more information.
 
 ### License
