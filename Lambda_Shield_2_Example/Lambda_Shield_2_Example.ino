@@ -4,6 +4,7 @@
     Originally forked from https://github.com/Bylund/Lambda-Shield-2-Example
 
     Version history:
+    2023-12-17        v1.0.7        Corrected error in analog output calcs. Re-instated oxygen conversion table with correct values
     2023-01-28        v1.0.6        Added button and rolling average battery voltage. Hardware v1.3 compatability
     2022-04-23        v1.0.5        Added 4x7 digit LED display in place of status LEDs. Compatibility with hardware v1.1.
     2022-03-18        v1.0.4        Corrected analogue output gradient and intercept terms.
@@ -40,35 +41,38 @@ TM1637TinyDisplay LEDdisplay(CLK, DIO);
 #define CJ125_INIT_REG1_STATUS_1 0x2889        /* The response of the init register when V=17 amplification is in use. */
 
 // Define pin assignments (ATTiny1614)
-#define CJ125_NSS_PIN 0       /* Pin used for chip select in SPI communication. */
+#define CJ125_NSS_PIN 0 /* Pin used for chip select in SPI communication. */
 //#define LED_STATUS_POWER 4    /* Pin used for power the status LED, indicating we have power. */
 //#define LED_STATUS_HEATER 5   /* Pin used for the heater status LED, indicating heater activity. */
-#define HEATER_OUTPUT_PIN 1  /* Pin used for the PWM output to the heater circuit. */
+#define HEATER_OUTPUT_PIN 1   /* Pin used for the PWM output to the heater circuit. */
 #define ANALOG_OUTPUT_PIN 2   /* Pin used for DAC output 0 to 4.3V. */
 #define UB_ANALOG_INPUT_PIN 3 /* Analog input for power supply.*/
 #define UR_ANALOG_INPUT_PIN 7 /* Analog input for temperature.*/
 #define UA_ANALOG_INPUT_PIN 6 /* Analog input for lambda.*/
-#define BUTTON_INPUT_PIN 11 /* Button input pin */
+#define BUTTON_INPUT_PIN 11   /* Button input pin */
 
 // Define adjustable parameters.
 #define UBAT_MIN 150 /* Minimum voltage (ADC value) on Ubat to operate */
 elapsedMillis statusUpdate;
-Bounce b = Bounce(); // Instantiate a Bounce object
+Bounce b = Bounce();  // Instantiate a Bounce object
 
 // Global variables.
-int adcValue_UA = 0;                                /* ADC value read from the CJ125 UA output pin */
-int adcValue_UR = 0;                                /* ADC value read from the CJ125 UR output pin */
-int adcValue_UB = 0;                                /* ADC value read from the voltage divider caluclating Ubat */
-int adcValue_UA_Optimal = 0;                        /* UA ADC value stored when CJ125 is in calibration mode, λ=1 */
-int adcValue_UR_Optimal = 0;                        /* UR ADC value stored when CJ125 is in calibration mode, optimal temperature */
-int HeaterOutput = 0;                               /* Current PWM output value (0-255) of the heater output pin */
-int CJ125_Status = 0;                               /* Latest stored DIAG registry response from the CJ125 */
-int brightness = 0;                                 /* Heater/status LED brighteness */
-int fadeAmount = 5;                                 /* Heater/status LED fade ammount */
-int updateInterval = 50;                            /* Update interval for status LED timing */
-bool toggle = false;                                /* Status update toggle */
-bool faulted = false;                               /* Fault was raised */
-int disp = 0;                                       /* Display counter */
+int adcValue_UA = 0;               /* ADC value read from the CJ125 UA output pin */
+int adcValue_UR = 0;               /* ADC value read from the CJ125 UR output pin */
+int adcValue_UB = 0;               /* ADC value read from the voltage divider caluclating Ubat */
+int adcValue_UA_Optimal = 0;       /* UA ADC value stored when CJ125 is in calibration mode, λ=1 */
+int adcValue_UR_Optimal = 0;       /* UR ADC value stored when CJ125 is in calibration mode, optimal temperature */
+int HeaterOutput = 0;              /* Current PWM output value (0-255) of the heater output pin */
+int CJ125_Status = 0;              /* Latest stored DIAG registry response from the CJ125 */
+int brightness = 0;                /* Heater/status LED brighteness */
+int fadeAmount = 5;                /* Heater/status LED fade ammount */
+unsigned long updateInterval = 50; /* Update interval for status LED timing */
+bool toggle = false;               /* Status update toggle */
+bool faulted = false;              /* Fault was raised */
+int disp = 0;                      /* Display counter */
+float LAMBDA_VALUE = 0;            /* Lambda value */
+float OXYGEN_CONTENT = 0;          /* Oxygen content */
+
 
 // PID regulation variables.
 int dState;              /* Last position input. */
@@ -80,7 +84,7 @@ const float iGain = 0.8; /* Integral gain. Default = 0.8*/
 const float dGain = 10;  /* Derivative gain. Default = 10*/
 
 // Lambda Conversion Lookup Table. (ADC 39-791).
-const PROGMEM float Lambda_Conversion[753] {
+const PROGMEM float Lambda_Conversion[753]{
   0.750, 0.751, 0.752, 0.752, 0.753, 0.754, 0.755, 0.755, 0.756, 0.757, 0.758, 0.758, 0.759, 0.760, 0.761, 0.761, 0.762, 0.763, 0.764, 0.764,
   0.765, 0.766, 0.766, 0.767, 0.768, 0.769, 0.769, 0.770, 0.771, 0.772, 0.772, 0.773, 0.774, 0.774, 0.775, 0.776, 0.777, 0.777, 0.778, 0.779,
   0.780, 0.780, 0.781, 0.782, 0.782, 0.783, 0.784, 0.785, 0.785, 0.786, 0.787, 0.787, 0.788, 0.789, 0.790, 0.790, 0.791, 0.792, 0.793, 0.793,
@@ -121,20 +125,36 @@ const PROGMEM float Lambda_Conversion[753] {
   8.466, 8.587, 8.710, 8.837, 8.966, 9.099, 9.235, 9.374, 9.516, 9.662, 9.811, 9.963, 10.119
 };
 
-const PROGMEM float Oxygen_Conversion[256] {
-  11.03, 11.07, 11.10, 11.14, 11.18, 11.22, 11.25, 11.29, 11.33, 11.37, 11.40, 11.44, 11.48, 11.52, 11.55, 11.59, 11.63, 11.67, 11.70, 11.74,
-  11.78, 11.82, 11.85, 11.89, 11.93, 11.97, 12.00, 12.04, 12.08, 12.12, 12.15, 12.19, 12.23, 12.27, 12.30, 12.34, 12.38, 12.42, 12.45, 12.49,
-  12.53, 12.57, 12.60, 12.64, 12.68, 12.72, 12.75, 12.79, 12.83, 12.87, 12.90, 12.94, 12.98, 13.01, 13.05, 13.09, 13.13, 13.16, 13.20, 13.24,
-  13.28, 13.31, 13.35, 13.39, 13.43, 13.46, 13.50, 13.54, 13.58, 13.61, 13.65, 13.69, 13.73, 13.76, 13.80, 13.84, 13.88, 13.91, 13.95, 13.99,
-  14.03, 14.06, 14.10, 14.14, 14.18, 14.21, 14.25, 14.29, 14.33, 14.36, 14.40, 14.44, 14.48, 14.51, 14.55, 14.59, 14.63, 14.66, 14.70, 14.74,
-  14.78, 14.81, 14.85, 14.89, 14.92, 14.96, 15.00, 15.04, 15.07, 15.11, 15.15, 15.19, 15.22, 15.26, 15.30, 15.34, 15.37, 15.41, 15.45, 15.49,
-  15.52, 15.56, 15.60, 15.64, 15.67, 15.71, 15.75, 15.79, 15.82, 15.86, 15.90, 15.94, 15.97, 16.01, 16.05, 16.09, 16.12, 16.16, 16.20, 16.24,
-  16.27, 16.31, 16.35, 16.39, 16.42, 16.46, 16.50, 16.54, 16.57, 16.61, 16.65, 16.69, 16.72, 16.76, 16.80, 16.83, 16.87, 16.91, 16.95, 16.98,
-  17.02, 17.06, 17.10, 17.13, 17.17, 17.21, 17.25, 17.28, 17.32, 17.36, 17.40, 17.43, 17.47, 17.51, 17.55, 17.58, 17.62, 17.66, 17.70, 17.73,
-  17.77, 17.81, 17.85, 17.88, 17.92, 17.96, 18.00, 18.03, 18.07, 18.11, 18.15, 18.18, 18.22, 18.26, 18.30, 18.33, 18.37, 18.41, 18.45, 18.48,
-  18.52, 18.56, 18.60, 18.63, 18.67, 18.71, 18.74, 18.78, 18.82, 18.86, 18.89, 18.93, 18.97, 19.01, 19.04, 19.08, 19.12, 19.16, 19.19, 19.23,
-  19.27, 19.31, 19.34, 19.38, 19.42, 19.46, 19.49, 19.53, 19.57, 19.61, 19.64, 19.68, 19.72, 19.76, 19.79, 19.83, 19.87, 19.91, 19.94, 19.98,
-  20.02, 20.06, 20.09, 20.13, 20.17, 20.21, 20.24, 20.28, 20.32, 20.36, 20.39, 20.43, 20.47, 20.51, 20.54, 20.58
+//Oxygen Conversion Lookup Table. (ADC 307-854).
+const PROGMEM float Oxygen_Conversion[548]{
+  00.00, 00.04, 00.08, 00.13, 00.17, 00.21, 00.25, 00.30, 00.34, 00.38, 00.42, 00.47, 00.51, 00.55, 00.59, 00.64, 00.68, 00.72, 00.76, 00.81,
+  00.85, 00.89, 00.93, 00.98, 01.02, 01.06, 01.10, 01.15, 01.19, 01.23, 01.27, 01.31, 01.36, 01.40, 01.44, 01.48, 01.53, 01.57, 01.61, 01.65,
+  01.70, 01.74, 01.78, 01.82, 01.86, 01.91, 01.95, 01.99, 02.03, 02.08, 02.12, 02.16, 02.20, 02.24, 02.29, 02.33, 02.37, 02.41, 02.45, 02.50,
+  02.54, 02.58, 02.62, 02.66, 02.71, 02.75, 02.79, 02.83, 02.87, 02.92, 02.96, 03.00, 03.04, 03.08, 03.13, 03.17, 03.21, 03.25, 03.29, 03.33,
+  03.38, 03.42, 03.46, 03.50, 03.54, 03.58, 03.63, 03.67, 03.71, 03.75, 03.79, 03.83, 03.88, 03.92, 03.96, 04.00, 04.04, 04.08, 04.12, 04.17,
+  04.21, 04.25, 04.29, 04.33, 04.37, 04.41, 04.45, 04.50, 04.54, 04.58, 04.62, 04.66, 04.70, 04.74, 04.78, 04.82, 04.86, 04.91, 04.95, 04.99,
+  05.03, 05.07, 05.11, 05.15, 05.19, 05.23, 05.27, 05.31, 05.35, 05.39, 05.44, 05.48, 05.52, 05.56, 05.60, 05.64, 05.68, 05.72, 05.76, 05.80,
+  05.84, 05.88, 05.92, 05.96, 06.00, 06.04, 06.08, 06.12, 06.16, 06.20, 06.24, 06.28, 06.32, 06.36, 06.40, 06.44, 06.48, 06.52, 06.56, 06.60,
+  06.64, 06.68, 06.72, 06.76, 06.80, 06.84, 06.88, 06.92, 06.96, 07.00, 07.03, 07.07, 07.11, 07.15, 07.19, 07.23, 07.27, 07.31, 07.35, 07.39,
+  07.43, 07.47, 07.51, 07.55, 07.59, 07.62, 07.66, 07.70, 07.74, 07.78, 07.82, 07.86, 07.90, 07.94, 07.98, 08.02, 08.06, 08.09, 08.13, 08.17,
+  08.21, 08.25, 08.29, 08.33, 08.37, 08.41, 08.45, 08.49, 08.52, 08.56, 08.60, 08.64, 08.68, 08.72, 08.76, 08.80, 08.84, 08.88, 08.91, 08.95,
+  08.99, 09.03, 09.07, 09.11, 09.15, 09.19, 09.23, 09.26, 09.30, 09.34, 09.38, 09.42, 09.46, 09.50, 09.54, 09.57, 09.61, 09.65, 09.69, 09.73,
+  09.77, 09.81, 09.85, 09.89, 09.92, 09.96, 10.00, 10.04, 10.08, 10.12, 10.16, 10.19, 10.23, 10.27, 10.31, 10.35, 10.39, 10.43, 10.47, 10.50,
+  10.54, 10.58, 10.62, 10.66, 10.70, 10.73, 10.77, 10.81, 10.85, 10.89, 10.93, 10.97, 11.00, 11.04, 11.08, 11.12, 11.16, 11.20, 11.23, 11.27,
+  11.31, 11.35, 11.39, 11.43, 11.46, 11.50, 11.54, 11.58, 11.62, 11.66, 11.69, 11.73, 11.77, 11.81, 11.85, 11.89, 11.92, 11.96, 12.00, 12.04,
+  12.08, 12.11, 12.15, 12.19, 12.23, 12.27, 12.30, 12.34, 12.38, 12.42, 12.46, 12.49, 12.53, 12.57, 12.61, 12.65, 12.68, 12.72, 12.76, 12.80,
+  12.84, 12.87, 12.91, 12.95, 12.99, 13.03, 13.06, 13.10, 13.14, 13.18, 13.21, 13.25, 13.29, 13.33, 13.36, 13.40, 13.44, 13.48, 13.51, 13.55,
+  13.59, 13.63, 13.67, 13.70, 13.74, 13.78, 13.82, 13.85, 13.89, 13.93, 13.96, 14.00, 14.04, 14.08, 14.11, 14.15, 14.19, 14.23, 14.26, 14.30,
+  14.34, 14.38, 14.41, 14.45, 14.49, 14.52, 14.56, 14.60, 14.64, 14.67, 14.71, 14.75, 14.78, 14.82, 14.86, 14.90, 14.93, 14.97, 15.01, 15.04,
+  15.08, 15.12, 15.15, 15.19, 15.23, 15.26, 15.30, 15.34, 15.37, 15.41, 15.45, 15.48, 15.52, 15.56, 15.59, 15.63, 15.67, 15.70, 15.74, 15.78,
+  15.81, 15.85, 15.89, 15.92, 15.96, 16.00, 16.03, 16.07, 16.11, 16.14, 16.18, 16.22, 16.25, 16.29, 16.32, 16.36, 16.40, 16.43, 16.47, 16.51,
+  16.54, 16.58, 16.61, 16.65, 16.69, 16.72, 16.76, 16.79, 16.83, 16.87, 16.90, 16.94, 16.97, 17.01, 17.05, 17.08, 17.12, 17.15, 17.19, 17.22,
+  17.26, 17.30, 17.33, 17.37, 17.40, 17.44, 17.47, 17.51, 17.55, 17.58, 17.62, 17.65, 17.69, 17.72, 17.76, 17.79, 17.83, 17.86, 17.90, 17.94,
+  17.97, 18.01, 18.04, 18.08, 18.11, 18.15, 18.18, 18.22, 18.25, 18.29, 18.32, 18.36, 18.39, 18.43, 18.46, 18.50, 18.53, 18.57, 18.60, 18.64,
+  18.67, 18.71, 18.74, 18.78, 18.81, 18.85, 18.88, 18.92, 18.95, 18.98, 19.02, 19.05, 19.09, 19.12, 19.16, 19.19, 19.23, 19.26, 19.30, 19.33,
+  19.36, 19.40, 19.43, 19.47, 19.50, 19.54, 19.57, 19.60, 19.64, 19.67, 19.71, 19.74, 19.77, 19.81, 19.84, 19.88, 19.91, 19.94, 19.98, 20.01,
+  20.05, 20.08, 20.11, 20.15, 20.18, 20.22, 20.25, 20.28, 20.32, 20.35, 20.38, 20.42, 20.45, 20.48, 20.52, 20.55, 20.58, 20.62, 20.65, 20.68,
+  20.72, 20.75, 20.78, 20.82, 20.85, 20.88, 20.92, 20.95
 };
 
 const uint8_t PWR[1][4] = {
@@ -153,18 +173,14 @@ const uint8_t CAL_2[3][4] = {
   { 0x5b, 0xbf, 0x6d, 0x7f },  // Frame 2
 };
 
-void UpdateLEDStatus()
-{
+void UpdateLEDStatus() {
   // CJ125 error status handling.
-  if (statusUpdate > updateInterval)
-  {
+  if (statusUpdate > updateInterval) {
     statusUpdate = 0;
-    switch (CJ125_Status)
-    {
+    switch (CJ125_Status) {
       case CJ125_DIAG_REG_STATUS_OK:
         // Clear fault flag. Clear display
-        if (faulted)
-        {
+        if (faulted) {
           faulted = false;
           LEDdisplay.clear();
         }
@@ -196,8 +212,7 @@ void UpdateLEDStatus()
 }
 
 // Function for transfering SPI data to the CJ125.
-uint16_t COM_SPI(uint16_t TX_data)
-{
+uint16_t COM_SPI(uint16_t TX_data) {
   // Configure SPI for CJ125 controller.
   SPI.setDataMode(SPI_MODE1);
   SPI.setClockDivider(SPI_CLOCK_DIV128);
@@ -215,8 +230,7 @@ uint16_t COM_SPI(uint16_t TX_data)
 }
 
 // Temperature regulating software (PID).
-int Heater_PID_Control(int input)
-{
+int Heater_PID_Control(int input) {
   // Calculate error term.
   int error = adcValue_UR_Optimal - input;
 
@@ -229,13 +243,11 @@ int Heater_PID_Control(int input)
   // Calculate the integral state with appropriate limiting.
   iState += error;
 
-  if (iState > iMax)
-  {
+  if (iState > iMax) {
     iState = iMax;
   }
 
-  if (iState < iMin)
-  {
+  if (iState < iMin) {
     iState = iMin;
   }
 
@@ -250,14 +262,12 @@ int Heater_PID_Control(int input)
   int RegulationOutput = pTerm + iTerm + dTerm;
 
   // Set maximum heater output (full power).
-  if (RegulationOutput > 255)
-  {
+  if (RegulationOutput > 255) {
     RegulationOutput = 255;
   }
 
   // Set minimum heater value (cooling).
-  if (RegulationOutput < 0.0)
-  {
+  if (RegulationOutput < 0.0) {
     RegulationOutput = 0;
   }
 
@@ -265,44 +275,32 @@ int Heater_PID_Control(int input)
   return RegulationOutput;
 }
 
-// 0-4.3V analog output
-void UpdateAnalogOutput()
-{
-  // Local constants.
-  const int maximumOutput = 255; /* 4.3V */
-  const int minimumOutput = 0;   /* 0V */
-  const float m = 27.217;  /* Gradient term */
-  const float c = 20.2413; /* Intercept term */
-
+// 0-5V analog output
+void UpdateAnalogOutput(int Input_ADC) {
   // Local variables.
   uint8_t analogOutput = 0;
 
-  // Calculate ADC value from Lambda
-  float lambdaADC = (m * Lookup_Lambda(adcValue_UA)) - c;
-  analogOutput = lambdaADC + 0.5; /* Float to integer is truncated, adding 0.5 effectively rounds the float */
-
-  // Limit check output value
-  if (analogOutput > maximumOutput)
-  {
-    analogOutput = maximumOutput;
+  // Calculate ADC value from input ADC. Range for 7.98 to 20.95 AFR
+  if (Input_ADC >= 195 && Input_ADC <= 548) {
+    map(analogOutput, 195, 548, 0, 255);
   }
-  if (analogOutput < minimumOutput)
-  {
-    analogOutput = minimumOutput;
+  // Limit check the analog output
+  if (Input_ADC > 548) {
+    analogOutput = 255;
   }
 
-  // Update the display - using AFR
-  if (!faulted)
-  {
+  if (Input_ADC < 195) {
+    analogOutput = 0;
+  }
+
+  // Update the display
+  if (!faulted) {
     switch (disp) {
       case 0:
-        float afr = pgm_read_float_near(Oxygen_Conversion + analogOutput);
-        int afri = (afr * 100);
-
-        LEDdisplay.showNumberDec(afri, 64, false, 4, 0);
+        LEDdisplay.showNumberDec(OXYGEN_CONTENT * 100, 64, false, 4, 0);
         break;
       case 1:
-        LEDdisplay.showNumberDec(Lookup_Lambda(adcValue_UA) * 100, 64, false, 4, 0);
+        LEDdisplay.showNumberDec(LAMBDA_VALUE * 100, 64, false, 4, 0);
         break;
     }
   }
@@ -312,24 +310,20 @@ void UpdateAnalogOutput()
 }
 
 // Lookup Lambda Value.
-float Lookup_Lambda(int Input_ADC)
-{
+float Lookup_Lambda(int Input_ADC) {
   // Declare and set default return value.
   float LAMBDA_VALUE = 0;
 
   // Validate ADC range for lookup table.
-  if (Input_ADC >= 39 && Input_ADC <= 791)
-  {
+  if (Input_ADC >= 39 && Input_ADC <= 791) {
     LAMBDA_VALUE = pgm_read_float_near(Lambda_Conversion + (Input_ADC - 39));
   }
 
-  if (Input_ADC > 791)
-  {
+  if (Input_ADC > 791) {
     LAMBDA_VALUE = 10.119;
   }
 
-  if (Input_ADC < 39)
-  {
+  if (Input_ADC < 39) {
     LAMBDA_VALUE = 0.750;
   }
 
@@ -337,9 +331,25 @@ float Lookup_Lambda(int Input_ADC)
   return LAMBDA_VALUE;
 }
 
+//Lookup Oxygen Content.
+float Lookup_Oxygen(int Input_ADC) {
+
+  //Declare and set default return value.
+  float OXYGEN_CONTENT = 0;
+
+  //Validate ADC range for lookup table.
+  if (Input_ADC > 854) Input_ADC = 854;
+
+  if (Input_ADC >= 307 && Input_ADC <= 854) {
+    OXYGEN_CONTENT = pgm_read_float_near(Oxygen_Conversion + (Input_ADC - 307));
+  }
+
+  //Return value.
+  return OXYGEN_CONTENT;
+}
+
 // Function to set up device for operation.
-void setup()
-{
+void setup() {
   // Set up SPI.
   SPI.begin();
   SPI.setBitOrder(MSBFIRST);
@@ -352,7 +362,7 @@ void setup()
   digitalWrite(CJ125_NSS_PIN, HIGH);
   analogWrite(HEATER_OUTPUT_PIN, 0); /* PWM is initially off. */
   analogWrite(ANALOG_OUTPUT_PIN, 0); /* PWM is initially off. */
-  DACReference(0x3); /* DAC reference set to 4.3V (maximum for the ATTiny1614) */
+  DACReference(0x3);                 /* DAC reference set to 4.3V (maximum for the ATTiny1614) */
 
   // Start of operation. (Power LED on).
   LEDdisplay.setBrightness(0x0f);
@@ -360,18 +370,16 @@ void setup()
   LEDdisplay.showAnimation_P(PWR, FRAMES(PWR), TIME_MS(2750));
 
   // Set up button
-  b.attach(BUTTON_INPUT_PIN, INPUT_PULLUP); // Attach the debouncer to a pin with INPUT_PULLUP mode
-  b.interval(25); // Use a debounce interval of 25 milliseconds
+  b.attach(BUTTON_INPUT_PIN, INPUT_PULLUP);  // Attach the debouncer to a pin with INPUT_PULLUP mode
+  b.interval(25);                            // Use a debounce interval of 25 milliseconds
 
   // Start main function.
   start();
 }
 
-void start()
-{
+void start() {
   // Wait until everything is ready.
-  while (adcValue_UB < UBAT_MIN || CJ125_Status != CJ125_DIAG_REG_STATUS_OK)
-  {
+  while (adcValue_UB < UBAT_MIN || CJ125_Status != CJ125_DIAG_REG_STATUS_OK) {
     // Read CJ125 diagnostic register from SPI.
     CJ125_Status = COM_SPI(CJ125_DIAG_REG_REQUEST);
 
@@ -395,7 +403,7 @@ void start()
 
   // Update analog output, display the optimal value.
   adcValue_UA = adcValue_UA_Optimal;
-  UpdateAnalogOutput();
+  UpdateAnalogOutput(adcValue_UA);
 
   // Set CJ125 in normal operation mode.
   //COM_SPI(CJ125_INIT_REG1_MODE_NORMAL_V8);  /* V=0 */
@@ -403,7 +411,6 @@ void start()
 
   /* Heat up sensor. This is described in detail in the datasheet of the LSU 4.9 sensor with a
      condensation phase and a ramp up phase before going in to PID control. */
-  int ledBlink = 255;
 
   // Calculate supply voltage.
   float SupplyVoltage = map(adcValue_UB, 0, 1023, 0, 15);
@@ -412,34 +419,31 @@ void start()
   int CondensationPWM = (2 / SupplyVoltage) * 255;
   analogWrite(HEATER_OUTPUT_PIN, CondensationPWM);
 
-  // First calibration voltage. ADC 98, 1.65V, 1.0 Lambda
-  int firstCal = 98;
+  // First calibration voltage. ADC 128, 2.5V, 14.7 AFR
+  int firstCal = 128;
   analogWrite(ANALOG_OUTPUT_PIN, firstCal);
 
   int t = 0;
-  while (t < 5 && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN)
-  {
+  while (t < 5 && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN) {
     t += 1;
 
     // Condensation phase
     //LEDdisplay.showString("COND CAL=1.92V");
     LEDdisplay.showAnimation_P(CAL_1, FRAMES(CAL_1), TIME_MS(750));
-    delay(1000); // 5 seconds total
+    delay(1000);  // 5 seconds total
   }
 
-  // Second calibration voltage. ADC 255, 5.0V, 1.4 Lambda
+  // Second calibration voltage. ADC 255, 5.0V, 20.95
   int secondCal = 255;
   analogWrite(ANALOG_OUTPUT_PIN, secondCal);
 
   // Ramp up phase, +0.4V/s until 100% PWM from 8.5V.
   float UHeater = 8.5;
-  while (UHeater < 13.0 && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN)
-  {
+  while (UHeater < 13.0 && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN) {
     // Set heater output during ramp up.
     CondensationPWM = (UHeater / SupplyVoltage) * 255;
 
-    if (CondensationPWM > 255)
-    {
+    if (CondensationPWM > 255) {
       CondensationPWM = 255; /* If supply voltage is less than 13V, maximum is 100% PWM */
     }
 
@@ -452,12 +456,11 @@ void start()
     LEDdisplay.showAnimation_P(CAL_2, FRAMES(CAL_2), TIME_MS(750));
     //LEDdisplay.showString("HEAT CAL=L1.4");
 
-    delay(1000); //0.4V/s
+    delay(1000);  //0.4V/s
   }
 
   // Heat until temperature optimum is reached or exceeded (lower value is warmer).
-  while (analogRead(UR_ANALOG_INPUT_PIN) > adcValue_UR_Optimal && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN)
-  {
+  while (analogRead(UR_ANALOG_INPUT_PIN) > adcValue_UR_Optimal && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN) {
     // Display heating phase
     LEDdisplay.showString("PID");
   }
@@ -468,66 +471,64 @@ void start()
 }
 
 // Infinite loop.
-void loop()
-{
+void loop() {
   // Update CJ125 diagnostic register from SPI.
   CJ125_Status = COM_SPI(CJ125_DIAG_REG_REQUEST);
 
   // Proceed if CJ125 status is OK, otherwise turn off the heater
-  if (CJ125_Status == CJ125_DIAG_REG_STATUS_OK)
-  {
+  if (CJ125_Status == CJ125_DIAG_REG_STATUS_OK) {
     // Update analog inputs.
     adcValue_UA = analogRead(UA_ANALOG_INPUT_PIN);
     adcValue_UR = analogRead(UR_ANALOG_INPUT_PIN);
     adcValue_UB = analogRead(UB_ANALOG_INPUT_PIN);
 
     // Adjust PWM output by calculated PID regulation.
-    if (adcValue_UR < 500 || adcValue_UR_Optimal != 0 || adcValue_UB > UBAT_MIN)
-    {
+    if (adcValue_UR < 500 || adcValue_UR_Optimal != 0 || adcValue_UB > UBAT_MIN) {
       // Calculate and set new heater output.
       HeaterOutput = Heater_PID_Control(adcValue_UR);
       analogWrite(HEATER_OUTPUT_PIN, HeaterOutput);
-    }
-    else
-    {
+    } else {
       // Turn off heater if we are not in PID control.
       HeaterOutput = 0;
       analogWrite(HEATER_OUTPUT_PIN, HeaterOutput);
     }
 
+    // Calculate Lambda Value.
+    LAMBDA_VALUE = Lookup_Lambda(adcValue_UA);
+
+    // Calculate Oxygen Content.
+    OXYGEN_CONTENT = Lookup_Oxygen(adcValue_UA);
+
     // Update analog output.
-    UpdateAnalogOutput();
-  }
-  else
-  {
+    UpdateAnalogOutput(adcValue_UA);
+
+  } else {
     analogWrite(HEATER_OUTPUT_PIN, 0);
   }
 
   // Update LED status - ignore on first loop
-  if (toggle)
-  {
+  if (toggle) {
     UpdateLEDStatus();
   }
   toggle = true;
 
-  b.update(); // Update the Bounce instance
+  b.update();  // Update the Bounce instance
 
-  if ( b.fell() ) {  // Call code if button transitions from HIGH to LOW
+  if (b.fell()) {  // Call code if button transitions from HIGH to LOW
     disp += 1;
     LEDdisplay.clear();
   }
-  if (disp > 1)
-  {
+  if (disp > 1) {
     disp = 0;
   }
 }
 
 float movingAverage(float value) {
-  const byte nvalues = 128;             // Moving average window size
+  const byte nvalues = 128;  // Moving average window size
 
-  static byte current = 0;            // Index for current value
-  static byte cvalues = 0;            // Count of values read (<= nvalues)
-  static float sum = 0;               // Rolling sum
+  static byte current = 0;  // Index for current value
+  static byte cvalues = 0;  // Count of values read (<= nvalues)
+  static float sum = 0;     // Rolling sum
   static float values[nvalues];
 
   sum += value;
@@ -536,7 +537,7 @@ float movingAverage(float value) {
   if (cvalues == nvalues)
     sum -= values[current];
 
-  values[current] = value;          // Replace the oldest with the latest
+  values[current] = value;  // Replace the oldest with the latest
 
   if (++current >= nvalues)
     current = 0;
