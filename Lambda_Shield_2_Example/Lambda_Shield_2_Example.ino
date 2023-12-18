@@ -4,7 +4,7 @@
     Originally forked from https://github.com/Bylund/Lambda-Shield-2-Example
 
     Version history:
-    2023-12-17        v1.0.7        Corrected error in analog output calcs. Re-instated oxygen conversion table with correct values
+    2023-12-17        v1.0.7        Corrected error in analog output calcs. Re-instated oxygen conversion table with correct values. Analog output covers AFR range of 9.89 to 19.3 AFR. 14.7 = 2.5V
     2023-01-28        v1.0.6        Added button and rolling average battery voltage. Hardware v1.3 compatability
     2022-04-23        v1.0.5        Added 4x7 digit LED display in place of status LEDs. Compatibility with hardware v1.1.
     2022-03-18        v1.0.4        Corrected analogue output gradient and intercept terms.
@@ -158,7 +158,7 @@ const PROGMEM float Oxygen_Conversion[548]{
 };
 
 const uint8_t PWR[1][4] = {
-  { 0x1c, 0x86, 0xbf, 0x7d }
+  { 0x1c, 0x86, 0xbf, 0x07 }
 };
 
 const uint8_t CAL_1[3][4] = {
@@ -170,7 +170,7 @@ const uint8_t CAL_1[3][4] = {
 const uint8_t CAL_2[3][4] = {
   { 0x76, 0x79, 0x77, 0x78 },  // Frame 0
   { 0x77, 0x71, 0x50, 0x48 },  // Frame 1
-  { 0x5b, 0xbf, 0x6d, 0x7f },  // Frame 2
+  { 0x06, 0xef, 0x4f, 0x3f }\,  // Frame 2
 };
 
 void UpdateLEDStatus() {
@@ -280,16 +280,17 @@ void UpdateAnalogOutput(int Input_ADC) {
   // Local variables.
   uint8_t analogOutput = 0;
 
-  // Calculate ADC value from input ADC. Range for 7.98 to 20.95 AFR
-  if (Input_ADC >= 195 && Input_ADC <= 548) {
-    map(analogOutput, 195, 548, 0, 255);
+  // Calculate ADC value from input ADC. Range for 9.89 to 19.3 AFR
+  if (Input_ADC >= 550 && Input_ADC <= 805) {
+    analogOutput = map(Input_ADC, 550, 805, 0, 255);
   }
+
   // Limit check the analog output
-  if (Input_ADC > 548) {
+  if (Input_ADC > 805) {
     analogOutput = 255;
   }
 
-  if (Input_ADC < 195) {
+  if (Input_ADC < 550) {
     analogOutput = 0;
   }
 
