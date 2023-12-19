@@ -4,6 +4,7 @@
     Originally forked from https://github.com/Bylund/Lambda-Shield-2-Example
 
     Version history:
+    2023-12-19        v1.0.8        Corrected condesation and warm up phase delays with respect to display animation. Removed unused moving average function.
     2023-12-17        v1.0.7        Corrected error in analog output calcs. Re-instated oxygen conversion table with correct values. Analog output covers AFR range of 9.89 to 19.3 AFR. 14.7 = 2.5V
     2023-01-28        v1.0.6        Added button and rolling average battery voltage. Hardware v1.3 compatability
     2022-04-23        v1.0.5        Added 4x7 digit LED display in place of status LEDs. Compatibility with hardware v1.1.
@@ -158,22 +159,20 @@ const PROGMEM float Oxygen_Conversion[548]{
 };
 
 const uint8_t PWR[1][4] = {
-  { 0x1c, 0x86, 0xbf, 0x07 }
+  { 0x1c, 0x86, 0xbf, 0x7F }
 };
 
-const uint8_t CAL_1[3][4] = {
+const uint8_t CAL_1[2][4] = {
   { 0x39, 0x5c, 0x54, 0x5e },  // Frame 0
-  { 0x77, 0x71, 0x50, 0x48 },  // Frame 1
-  { 0x06, 0xe6, 0x07, 0x00 },  // Frame 2
+  { 0x06, 0xe6, 0x07, 0x00 },  // Frame 1
 };
 
-const uint8_t CAL_2[3][4] = {
+const uint8_t CAL_2[2][4] = {
   { 0x76, 0x79, 0x77, 0x78 },  // Frame 0
-  { 0x77, 0x71, 0x50, 0x48 },  // Frame 1
-  { 0x06, 0xef, 0x4f, 0x3f }\,  // Frame 2
+  { 0x06, 0xef, 0x4f, 0x3f },  // Frame 1
 };
 
-void UpdateLEDStatus() {
+void UpdateFaultStatus() {
   // CJ125 error status handling.
   if (statusUpdate > updateInterval) {
     statusUpdate = 0;
@@ -365,7 +364,7 @@ void setup() {
   analogWrite(ANALOG_OUTPUT_PIN, 0); /* PWM is initially off. */
   DACReference(0x3);                 /* DAC reference set to 4.3V (maximum for the ATTiny1614) */
 
-  // Start of operation. (Power LED on).
+  // Start of operation.
   LEDdisplay.setBrightness(0x0f);
   LEDdisplay.setScrolldelay(300);
   LEDdisplay.showAnimation_P(PWR, FRAMES(PWR), TIME_MS(2750));
@@ -387,11 +386,10 @@ void start() {
     // Read input voltage.
     adcValue_UB = analogRead(UB_ANALOG_INPUT_PIN);
 
-    UpdateLEDStatus();
+    UpdateFaultStatus();
   }
 
-  // Start of operation. (Power LED on, heater LED off).
-
+  // Start of operation.
   // Set CJ125 in calibration mode.
   COM_SPI(CJ125_INIT_REG1_MODE_CALIBRATE);
 
@@ -429,12 +427,10 @@ void start() {
     t += 1;
 
     // Condensation phase
-    //LEDdisplay.showString("COND CAL=1.92V");
-    LEDdisplay.showAnimation_P(CAL_1, FRAMES(CAL_1), TIME_MS(750));
-    delay(1000);  // 5 seconds total
+    LEDdisplay.showAnimation_P(CAL_1, FRAMES(CAL_1), TIME_MS(500));  // Total delay = 1 second
   }
 
-  // Second calibration voltage. ADC 255, 5.0V, 20.95
+  // Second calibration voltage. ADC 255, 5.0V, 19.3
   int secondCal = 255;
   analogWrite(ANALOG_OUTPUT_PIN, secondCal);
 
@@ -454,10 +450,7 @@ void start() {
     UHeater += 0.4;
 
     // Heat-up phase
-    LEDdisplay.showAnimation_P(CAL_2, FRAMES(CAL_2), TIME_MS(750));
-    //LEDdisplay.showString("HEAT CAL=L1.4");
-
-    delay(1000);  //0.4V/s
+    LEDdisplay.showAnimation_P(CAL_2, FRAMES(CAL_2), TIME_MS(500));  // Total delay = 1 second
   }
 
   // Heat until temperature optimum is reached or exceeded (lower value is warmer).
@@ -509,7 +502,7 @@ void loop() {
 
   // Update LED status - ignore on first loop
   if (toggle) {
-    UpdateLEDStatus();
+    UpdateFaultStatus();
   }
   toggle = true;
 
@@ -522,29 +515,4 @@ void loop() {
   if (disp > 1) {
     disp = 0;
   }
-}
-
-float movingAverage(float value) {
-  const byte nvalues = 128;  // Moving average window size
-
-  static byte current = 0;  // Index for current value
-  static byte cvalues = 0;  // Count of values read (<= nvalues)
-  static float sum = 0;     // Rolling sum
-  static float values[nvalues];
-
-  sum += value;
-
-  // If the window is full, adjust the sum by deleting the oldest value
-  if (cvalues == nvalues)
-    sum -= values[current];
-
-  values[current] = value;  // Replace the oldest with the latest
-
-  if (++current >= nvalues)
-    current = 0;
-
-  if (cvalues < nvalues)
-    cvalues += 1;
-
-  return sum / cvalues;
 }
