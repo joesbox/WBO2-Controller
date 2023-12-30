@@ -4,6 +4,7 @@
     Originally forked from https://github.com/Bylund/Lambda-Shield-2-Example
 
     Version history:
+    2023-12-30        v1.0.9        More testing. AFR table was incorrect. Using lambda as the basis of all calculations.
     2023-12-19        v1.0.8        Corrected condesation and warm up phase delays with respect to display animation. Removed unused moving average function.
     2023-12-17        v1.0.7        Corrected error in analog output calcs. Re-instated oxygen conversion table with correct values. Analog output covers AFR range of 9.89 to 19.3 AFR. 14.7 = 2.5V
     2023-01-28        v1.0.6        Added button and rolling average battery voltage. Hardware v1.3 compatability
@@ -42,9 +43,7 @@ TM1637TinyDisplay LEDdisplay(CLK, DIO);
 #define CJ125_INIT_REG1_STATUS_1 0x2889        /* The response of the init register when V=17 amplification is in use. */
 
 // Define pin assignments (ATTiny1614)
-#define CJ125_NSS_PIN 0 /* Pin used for chip select in SPI communication. */
-//#define LED_STATUS_POWER 4    /* Pin used for power the status LED, indicating we have power. */
-//#define LED_STATUS_HEATER 5   /* Pin used for the heater status LED, indicating heater activity. */
+#define CJ125_NSS_PIN 0       /* Pin used for chip select in SPI communication. */
 #define HEATER_OUTPUT_PIN 1   /* Pin used for the PWM output to the heater circuit. */
 #define ANALOG_OUTPUT_PIN 2   /* Pin used for DAC output 0 to 4.3V. */
 #define UB_ANALOG_INPUT_PIN 3 /* Analog input for power supply.*/
@@ -73,6 +72,9 @@ bool faulted = false;              /* Fault was raised */
 int disp = 0;                      /* Display counter */
 float LAMBDA_VALUE = 0;            /* Lambda value */
 float OXYGEN_CONTENT = 0;          /* Oxygen content */
+
+// Constants
+float STOICH_PETROL = 14.7; /* Petrol stoichiometric AFR */
 
 
 // PID regulation variables.
@@ -126,40 +128,8 @@ const PROGMEM float Lambda_Conversion[753]{
   8.466, 8.587, 8.710, 8.837, 8.966, 9.099, 9.235, 9.374, 9.516, 9.662, 9.811, 9.963, 10.119
 };
 
-//Oxygen Conversion Lookup Table. (ADC 307-854).
-const PROGMEM float Oxygen_Conversion[548]{
-  00.00, 00.04, 00.08, 00.13, 00.17, 00.21, 00.25, 00.30, 00.34, 00.38, 00.42, 00.47, 00.51, 00.55, 00.59, 00.64, 00.68, 00.72, 00.76, 00.81,
-  00.85, 00.89, 00.93, 00.98, 01.02, 01.06, 01.10, 01.15, 01.19, 01.23, 01.27, 01.31, 01.36, 01.40, 01.44, 01.48, 01.53, 01.57, 01.61, 01.65,
-  01.70, 01.74, 01.78, 01.82, 01.86, 01.91, 01.95, 01.99, 02.03, 02.08, 02.12, 02.16, 02.20, 02.24, 02.29, 02.33, 02.37, 02.41, 02.45, 02.50,
-  02.54, 02.58, 02.62, 02.66, 02.71, 02.75, 02.79, 02.83, 02.87, 02.92, 02.96, 03.00, 03.04, 03.08, 03.13, 03.17, 03.21, 03.25, 03.29, 03.33,
-  03.38, 03.42, 03.46, 03.50, 03.54, 03.58, 03.63, 03.67, 03.71, 03.75, 03.79, 03.83, 03.88, 03.92, 03.96, 04.00, 04.04, 04.08, 04.12, 04.17,
-  04.21, 04.25, 04.29, 04.33, 04.37, 04.41, 04.45, 04.50, 04.54, 04.58, 04.62, 04.66, 04.70, 04.74, 04.78, 04.82, 04.86, 04.91, 04.95, 04.99,
-  05.03, 05.07, 05.11, 05.15, 05.19, 05.23, 05.27, 05.31, 05.35, 05.39, 05.44, 05.48, 05.52, 05.56, 05.60, 05.64, 05.68, 05.72, 05.76, 05.80,
-  05.84, 05.88, 05.92, 05.96, 06.00, 06.04, 06.08, 06.12, 06.16, 06.20, 06.24, 06.28, 06.32, 06.36, 06.40, 06.44, 06.48, 06.52, 06.56, 06.60,
-  06.64, 06.68, 06.72, 06.76, 06.80, 06.84, 06.88, 06.92, 06.96, 07.00, 07.03, 07.07, 07.11, 07.15, 07.19, 07.23, 07.27, 07.31, 07.35, 07.39,
-  07.43, 07.47, 07.51, 07.55, 07.59, 07.62, 07.66, 07.70, 07.74, 07.78, 07.82, 07.86, 07.90, 07.94, 07.98, 08.02, 08.06, 08.09, 08.13, 08.17,
-  08.21, 08.25, 08.29, 08.33, 08.37, 08.41, 08.45, 08.49, 08.52, 08.56, 08.60, 08.64, 08.68, 08.72, 08.76, 08.80, 08.84, 08.88, 08.91, 08.95,
-  08.99, 09.03, 09.07, 09.11, 09.15, 09.19, 09.23, 09.26, 09.30, 09.34, 09.38, 09.42, 09.46, 09.50, 09.54, 09.57, 09.61, 09.65, 09.69, 09.73,
-  09.77, 09.81, 09.85, 09.89, 09.92, 09.96, 10.00, 10.04, 10.08, 10.12, 10.16, 10.19, 10.23, 10.27, 10.31, 10.35, 10.39, 10.43, 10.47, 10.50,
-  10.54, 10.58, 10.62, 10.66, 10.70, 10.73, 10.77, 10.81, 10.85, 10.89, 10.93, 10.97, 11.00, 11.04, 11.08, 11.12, 11.16, 11.20, 11.23, 11.27,
-  11.31, 11.35, 11.39, 11.43, 11.46, 11.50, 11.54, 11.58, 11.62, 11.66, 11.69, 11.73, 11.77, 11.81, 11.85, 11.89, 11.92, 11.96, 12.00, 12.04,
-  12.08, 12.11, 12.15, 12.19, 12.23, 12.27, 12.30, 12.34, 12.38, 12.42, 12.46, 12.49, 12.53, 12.57, 12.61, 12.65, 12.68, 12.72, 12.76, 12.80,
-  12.84, 12.87, 12.91, 12.95, 12.99, 13.03, 13.06, 13.10, 13.14, 13.18, 13.21, 13.25, 13.29, 13.33, 13.36, 13.40, 13.44, 13.48, 13.51, 13.55,
-  13.59, 13.63, 13.67, 13.70, 13.74, 13.78, 13.82, 13.85, 13.89, 13.93, 13.96, 14.00, 14.04, 14.08, 14.11, 14.15, 14.19, 14.23, 14.26, 14.30,
-  14.34, 14.38, 14.41, 14.45, 14.49, 14.52, 14.56, 14.60, 14.64, 14.67, 14.71, 14.75, 14.78, 14.82, 14.86, 14.90, 14.93, 14.97, 15.01, 15.04,
-  15.08, 15.12, 15.15, 15.19, 15.23, 15.26, 15.30, 15.34, 15.37, 15.41, 15.45, 15.48, 15.52, 15.56, 15.59, 15.63, 15.67, 15.70, 15.74, 15.78,
-  15.81, 15.85, 15.89, 15.92, 15.96, 16.00, 16.03, 16.07, 16.11, 16.14, 16.18, 16.22, 16.25, 16.29, 16.32, 16.36, 16.40, 16.43, 16.47, 16.51,
-  16.54, 16.58, 16.61, 16.65, 16.69, 16.72, 16.76, 16.79, 16.83, 16.87, 16.90, 16.94, 16.97, 17.01, 17.05, 17.08, 17.12, 17.15, 17.19, 17.22,
-  17.26, 17.30, 17.33, 17.37, 17.40, 17.44, 17.47, 17.51, 17.55, 17.58, 17.62, 17.65, 17.69, 17.72, 17.76, 17.79, 17.83, 17.86, 17.90, 17.94,
-  17.97, 18.01, 18.04, 18.08, 18.11, 18.15, 18.18, 18.22, 18.25, 18.29, 18.32, 18.36, 18.39, 18.43, 18.46, 18.50, 18.53, 18.57, 18.60, 18.64,
-  18.67, 18.71, 18.74, 18.78, 18.81, 18.85, 18.88, 18.92, 18.95, 18.98, 19.02, 19.05, 19.09, 19.12, 19.16, 19.19, 19.23, 19.26, 19.30, 19.33,
-  19.36, 19.40, 19.43, 19.47, 19.50, 19.54, 19.57, 19.60, 19.64, 19.67, 19.71, 19.74, 19.77, 19.81, 19.84, 19.88, 19.91, 19.94, 19.98, 20.01,
-  20.05, 20.08, 20.11, 20.15, 20.18, 20.22, 20.25, 20.28, 20.32, 20.35, 20.38, 20.42, 20.45, 20.48, 20.52, 20.55, 20.58, 20.62, 20.65, 20.68,
-  20.72, 20.75, 20.78, 20.82, 20.85, 20.88, 20.92, 20.95
-};
-
 const uint8_t PWR[1][4] = {
-  { 0x1c, 0x86, 0xbf, 0x7F }
+  { 0x1c, 0x86, 0xbf, 0x67 }
 };
 
 const uint8_t CAL_1[2][4] = {
@@ -275,21 +245,21 @@ int Heater_PID_Control(int input) {
 }
 
 // 0-5V analog output
-void UpdateAnalogOutput(int Input_ADC) {
+void UpdateAnalogOutput() {
   // Local variables.
   uint8_t analogOutput = 0;
 
-  // Calculate ADC value from input ADC. Range for 9.89 to 19.3 AFR
-  if (Input_ADC >= 550 && Input_ADC <= 805) {
-    analogOutput = map(Input_ADC, 550, 805, 0, 255);
+  // Calculate ADC value using oxygen content value. Range for 9.89 to 19.3 AFR
+  if (OXYGEN_CONTENT >= 9.89 && OXYGEN_CONTENT <= 19.3) {
+    analogOutput = map(OXYGEN_CONTENT, 9.89, 19.3, 0, 255);
   }
 
   // Limit check the analog output
-  if (Input_ADC > 805) {
+  if (OXYGEN_CONTENT > 19.3) {
     analogOutput = 255;
   }
 
-  if (Input_ADC < 550) {
+  if (OXYGEN_CONTENT < 9.89) {
     analogOutput = 0;
   }
 
@@ -329,23 +299,6 @@ float Lookup_Lambda(int Input_ADC) {
 
   // Return value.
   return LAMBDA_VALUE;
-}
-
-//Lookup Oxygen Content.
-float Lookup_Oxygen(int Input_ADC) {
-
-  //Declare and set default return value.
-  float OXYGEN_CONTENT = 0;
-
-  //Validate ADC range for lookup table.
-  if (Input_ADC > 854) Input_ADC = 854;
-
-  if (Input_ADC >= 307 && Input_ADC <= 854) {
-    OXYGEN_CONTENT = pgm_read_float_near(Oxygen_Conversion + (Input_ADC - 307));
-  }
-
-  //Return value.
-  return OXYGEN_CONTENT;
 }
 
 // Function to set up device for operation.
@@ -402,7 +355,7 @@ void start() {
 
   // Update analog output, display the optimal value.
   adcValue_UA = adcValue_UA_Optimal;
-  UpdateAnalogOutput(adcValue_UA);
+  UpdateAnalogOutput();
 
   // Set CJ125 in normal operation mode.
   //COM_SPI(CJ125_INIT_REG1_MODE_NORMAL_V8);  /* V=0 */
@@ -418,9 +371,9 @@ void start() {
   int CondensationPWM = (2 / SupplyVoltage) * 255;
   analogWrite(HEATER_OUTPUT_PIN, CondensationPWM);
 
-  // First calibration voltage. ADC 128, 2.5V, 14.7 AFR
-  int firstCal = 128;
-  analogWrite(ANALOG_OUTPUT_PIN, firstCal);
+  // First calibration voltage. 14.7 AFR
+  OXYGEN_CONTENT = STOICH_PETROL;
+  UpdateAnalogOutput();
 
   int t = 0;
   while (t < 5 && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN) {
@@ -430,9 +383,9 @@ void start() {
     LEDdisplay.showAnimation_P(CAL_1, FRAMES(CAL_1), TIME_MS(500));  // Total delay = 1 second
   }
 
-  // Second calibration voltage. ADC 255, 5.0V, 19.3
-  int secondCal = 255;
-  analogWrite(ANALOG_OUTPUT_PIN, secondCal);
+  // Second calibration voltage. 19.3 AFR
+  OXYGEN_CONTENT = 19.3;
+  UpdateAnalogOutput();
 
   // Ramp up phase, +0.4V/s until 100% PWM from 8.5V.
   float UHeater = 8.5;
@@ -452,6 +405,9 @@ void start() {
     // Heat-up phase
     LEDdisplay.showAnimation_P(CAL_2, FRAMES(CAL_2), TIME_MS(500));  // Total delay = 1 second
   }
+
+  // Reset oxygen value
+  OXYGEN_CONTENT = 0;
 
   // Heat until temperature optimum is reached or exceeded (lower value is warmer).
   while (analogRead(UR_ANALOG_INPUT_PIN) > adcValue_UR_Optimal && analogRead(UB_ANALOG_INPUT_PIN) > UBAT_MIN) {
@@ -491,10 +447,10 @@ void loop() {
     LAMBDA_VALUE = Lookup_Lambda(adcValue_UA);
 
     // Calculate Oxygen Content.
-    OXYGEN_CONTENT = Lookup_Oxygen(adcValue_UA);
+    OXYGEN_CONTENT = (LAMBDA_VALUE * STOICH_PETROL);
 
     // Update analog output.
-    UpdateAnalogOutput(adcValue_UA);
+    UpdateAnalogOutput();
 
   } else {
     analogWrite(HEATER_OUTPUT_PIN, 0);
